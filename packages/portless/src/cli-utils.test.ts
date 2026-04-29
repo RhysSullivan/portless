@@ -852,16 +852,18 @@ describe("readLanMarker / writeLanMarker", () => {
   it("uses the LAN marker to remember LAN mode when the proxy is stopped", async () => {
     const prevStateDir = process.env.PORTLESS_STATE_DIR;
     try {
-      fs.writeFileSync(path.join(tmpDir, "proxy.port"), "1355");
+      const port = await findFreePort();
+      fs.writeFileSync(path.join(tmpDir, "proxy.port"), String(port));
       writeTldFile(tmpDir, "local");
       writeLanMarker(tmpDir, "192.168.1.42");
       process.env.PORTLESS_STATE_DIR = tmpDir;
 
       await expect(discoverState()).resolves.toMatchObject({
         dir: tmpDir,
-        port: 1355,
+        port,
         tld: "local",
         lanMode: true,
+        lanIp: null,
       });
     } finally {
       if (prevStateDir === undefined) {
