@@ -4,6 +4,10 @@ export interface RouteInfo {
   hostname: string;
   port: number;
   pid?: number;
+  cwd?: string;
+  folder?: string;
+  gitBranch?: string;
+  command?: string;
 }
 
 export interface ProxyServerOptions {

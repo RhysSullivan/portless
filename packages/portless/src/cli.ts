@@ -101,6 +101,26 @@ import type { ManifestEntry } from "./turbo.js";
 
 const chalk = colors;
 
+function getGitBranch(cwd: string): string | undefined {
+  const result = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd,
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.status !== 0) return undefined;
+  const branch = result.stdout.trim();
+  return branch && branch !== "HEAD" ? branch : undefined;
+}
+
+function getRouteMetadata(cwd: string, commandArgs: string[]) {
+  return {
+    cwd,
+    folder: path.basename(cwd),
+    gitBranch: getGitBranch(cwd),
+    command: commandArgs.join(" "),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -1093,7 +1113,14 @@ async function runApp(
   // Register route (--force kills the existing owner if any)
   let killedPid: number | undefined;
   try {
-    killedPid = store.addRoute(hostname, port, process.pid, force, multiplex);
+    killedPid = store.addRoute(
+      hostname,
+      port,
+      process.pid,
+      force,
+      multiplex,
+      getRouteMetadata(process.cwd(), commandArgs)
+    );
   } catch (err) {
     if (err instanceof RouteConflictError) {
       console.error(colors.red(`Error: ${err.message}`));
@@ -1232,7 +1259,7 @@ async function runApp(
         // Best-effort cleanup; non-fatal
       }
       try {
-        store.removeRoute(hostname, process.pid);
+        store.removeRoute(hostname, process.pid, port);
       } catch {
         // Lock acquisition may fail during cleanup; non-fatal
       }
@@ -2825,7 +2852,14 @@ async function spawnProxiedApp(
     displayUrl = url;
 
     hostname = parseHostname(app.name, tld);
-    store.addRoute(hostname, appPort, process.pid, false, multiplex);
+    store.addRoute(
+      hostname,
+      appPort,
+      process.pid,
+      false,
+      multiplex,
+      getRouteMetadata(app.pkg.dir, app.commandArgs)
+    );
 
     env = {
       ...pkgEnv,
@@ -3094,7 +3128,14 @@ async function runWithTurbo(
     appUrls.push({ label: app.label, url });
 
     const hostname = parseHostname(app.name, tld);
-    store.addRoute(hostname, appPort, process.pid, false, multiplex);
+    store.addRoute(
+      hostname,
+      appPort,
+      process.pid,
+      false,
+      multiplex,
+      getRouteMetadata(app.pkg.dir, app.commandArgs)
+    );
     routes.push({ hostname, port: appPort });
 
     const entry: ManifestEntry = {

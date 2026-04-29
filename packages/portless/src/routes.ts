@@ -24,6 +24,10 @@ export const DIR_MODE = 0o755;
 export interface RouteMapping extends RouteInfo {
   id: string;
   pid: number;
+  cwd?: string;
+  folder?: string;
+  gitBranch?: string;
+  command?: string;
   tailscaleUrl?: string;
   tailscaleHttpsPort?: number;
   tailscaleFunnel?: boolean;
@@ -37,7 +41,15 @@ function isValidRoute(value: unknown): value is RouteMapping {
     typeof (value as RouteMapping).hostname === "string" &&
     typeof (value as RouteMapping).port === "number" &&
     typeof (value as RouteMapping).pid === "number" &&
-    ((value as RouteMapping).id === undefined || typeof (value as RouteMapping).id === "string")
+    ((value as RouteMapping).id === undefined || typeof (value as RouteMapping).id === "string") &&
+    ((value as RouteMapping).cwd === undefined ||
+      typeof (value as RouteMapping).cwd === "string") &&
+    ((value as RouteMapping).folder === undefined ||
+      typeof (value as RouteMapping).folder === "string") &&
+    ((value as RouteMapping).gitBranch === undefined ||
+      typeof (value as RouteMapping).gitBranch === "string") &&
+    ((value as RouteMapping).command === undefined ||
+      typeof (value as RouteMapping).command === "string")
   );
 }
 
@@ -223,7 +235,8 @@ export class RouteStore {
     port: number,
     pid: number,
     force = false,
-    multiplex = false
+    multiplex = false,
+    metadata: Partial<Pick<RouteMapping, "cwd" | "folder" | "gitBranch" | "command">> = {}
   ): number | undefined {
     this.ensureDir();
     if (!this.acquireLock()) {
@@ -258,7 +271,13 @@ export class RouteStore {
         if (multiplex) return r.pid !== pid || r.port !== port;
         return r.pid !== pid;
       });
-      const entry: RouteMapping = { id: routeId(hostname, port, pid), hostname, port, pid };
+      const entry: RouteMapping = {
+        id: routeId(hostname, port, pid),
+        hostname,
+        port,
+        pid,
+        ...metadata,
+      };
       filtered.push(entry);
       this.saveRoutes(filtered);
     } finally {

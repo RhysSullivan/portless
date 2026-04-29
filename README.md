@@ -188,7 +188,7 @@ portless myapp next dev
 portless myapp vite dev
 ```
 
-If only one `myapp.localhost` app is running, requests go straight to it. If more than one app is running, portless shows a selector page the first time you visit the hostname. Your choice is stored in a host-scoped cookie so page loads, assets, API requests, and WebSockets keep going to the selected app. HTML responses also get a small portless switcher so you can change the selected app without clearing cookies.
+If only one `myapp.localhost` app is running, requests go straight to it. If more than one app is running, portless shows a selector page the first time you visit the hostname. Your choice is stored in a host-scoped cookie so page loads, assets, API requests, and WebSockets keep going to the selected app. HTML responses also get a collapsed portless switcher that follows the system theme. Expand it to change the selected app and inspect host, port, PID, git branch, folder, and command details.
 
 ## Git Worktrees
 
