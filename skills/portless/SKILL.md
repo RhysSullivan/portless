@@ -143,7 +143,7 @@ portless myapp next dev
 portless myapp vite dev
 ```
 
-When one app is registered for the hostname, portless routes directly to it. When multiple apps are registered, portless shows a selector page and stores the selection in a host-scoped cookie. HTML responses include a collapsed switcher that follows the system theme. Expand it to change the selected app and inspect host, port, PID, git branch, folder, and command details. Use `PORTLESS_MULTIPLEX=1` to make this the default proxy mode.
+When one app is registered for the hostname, portless routes directly to it. When multiple apps are registered, portless shows a selector page with host, port, PID, git branch, folder, and command details for each app, then stores the selection in a host-scoped cookie. HTML responses include a collapsed switcher that follows the system theme. Expand it to change or clear the selected app and inspect the same details. Use `PORTLESS_MULTIPLEX=1` to make this the default proxy mode.
 
 ### Git worktrees
 

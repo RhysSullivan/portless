@@ -132,12 +132,22 @@ function isPortlessPath(url: string | undefined): boolean {
   return (url || "/").startsWith(CONTROL_PREFIX);
 }
 
+function getRouteDetails(route: ProxyRoute): [string, string][] {
+  const pid = route.pid === 0 ? "alias" : String(route.pid ?? "unknown");
+  return [
+    ["host", route.hostname],
+    ["port", `127.0.0.1:${route.port}`],
+    ["pid", pid],
+    ["branch", route.gitBranch || "unknown"],
+    ["folder", route.cwd || route.folder || "unknown"],
+    ["command", route.command || "unknown"],
+  ];
+}
+
 function renderSelectorPage(
   status: number,
   host: string,
   routes: ProxyRoute[],
-  proxyPort: number,
-  tls: boolean,
   currentId?: string,
   next = "/"
 ): string {
@@ -148,12 +158,28 @@ function renderSelectorPage(
       const id = getRouteId(route);
       const selected = currentId === id ? " selected" : "";
       const href = `${CONTROL_PREFIX}/select?id=${encodeURIComponent(id)}&next=${safeNext}`;
-      const label = route.pid === 0 ? "alias" : `pid ${route.pid ?? "unknown"}`;
-      return `<li><a href="${href}" class="card-link${selected}"><span class="name">${escapeHtml(route.hostname)}</span><span class="meta"><code class="port">127.0.0.1:${escapeHtml(String(route.port))}</code><code class="port">${escapeHtml(label)}</code><span class="arrow">${ARROW_SVG}</span></span></a></li>`;
+      const detailRows = getRouteDetails(route)
+        .map(
+          ([label, value]) =>
+            `<span class="selector-row"><span>${escapeHtml(label)}</span><code>${escapeHtml(value)}</code></span>`
+        )
+        .join("");
+      return `<li><div class="selector-app${selected}"><div class="selector-top"><span class="name">${escapeHtml(route.folder || route.hostname)}</span><code class="port">${escapeHtml(String(route.port))}</code></div><div class="selector-details">${detailRows}</div><div class="selector-actions"><a class="selector-button" href="${href}">${selected ? "Selected" : "Select"}</a></div></div></li>`;
     })
     .join("");
-  const clearUrl = `${CONTROL_PREFIX}/clear?next=${safeNext}`;
-  const body = `<div class="content"><p class="desc">Multiple apps are registered for <strong>${safeHost}</strong>. Choose which one this browser should use.</p><div class="section"><p class="label">Available apps</p><ul class="card">${items}</ul></div><div class="section"><p class="desc"><a href="${clearUrl}">Clear selection</a> for ${escapeHtml(formatUrl(host, proxyPort, tls))}</p></div></div>`;
+  const body = `<style>
+.selector-app{display:block;padding:14px 16px;color:inherit}
+.selector-app.selected{background:var(--surface)}
+.selector-top{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px}
+.selector-details{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-top:12px}
+.selector-row{min-width:0}
+.selector-row span{display:block;margin-bottom:2px;color:var(--text-3);font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0}
+.selector-row code{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg);font-family:var(--font-mono);font-size:12px}
+.selector-actions{display:flex;justify-content:flex-end;margin-top:12px}
+.selector-button{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:0 12px;border-radius:6px;background:var(--fg);color:var(--bg);font-size:13px;font-weight:500;text-decoration:none}
+.selector-app.selected .selector-button{border:1px solid var(--border);background:transparent;color:var(--fg)}
+@media (max-width:520px){.selector-details{grid-template-columns:1fr}}
+</style><div class="content"><p class="desc">Multiple apps are registered for <strong>${safeHost}</strong>. Choose which one this browser should use.</p><div class="section"><p class="label">Available apps</p><ul class="card">${items}</ul></div></div>`;
   return renderPage(status, "Select App", body);
 }
 
@@ -188,9 +214,7 @@ function handlePortlessControl(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   host: string,
-  routes: ProxyRoute[],
-  proxyPort: number,
-  tls: boolean
+  routes: ProxyRoute[]
 ): boolean {
   const url = req.url || "/";
   if (!isPortlessPath(url)) return false;
@@ -213,7 +237,7 @@ function handlePortlessControl(
   }
   const currentId = parseCookies(req.headers.cookie)[SELECTOR_COOKIE];
   res.writeHead(200, { "Content-Type": "text/html" });
-  res.end(renderSelectorPage(200, host, routes, proxyPort, tls, currentId, getRedirectTarget(url)));
+  res.end(renderSelectorPage(200, host, routes, currentId, getRedirectTarget(url)));
   return true;
 }
 
@@ -262,16 +286,7 @@ async function injectSwitcher(
       const id = getRouteId(route);
       const selected = id === currentId;
       const href = `${CONTROL_PREFIX}/select?id=${encodeURIComponent(id)}&next=${next}`;
-      const pid = route.pid === 0 ? "alias" : String(route.pid ?? "unknown");
-      const details = [
-        ["host", route.hostname],
-        ["port", `127.0.0.1:${route.port}`],
-        ["pid", pid],
-        ["branch", route.gitBranch || "unknown"],
-        ["folder", route.cwd || route.folder || "unknown"],
-        ["command", route.command || "unknown"],
-      ];
-      const detailRows = details
+      const detailRows = getRouteDetails(route)
         .map(
           ([label, value]) =>
             `<span class="pl-row"><span>${escapeHtml(label)}</span><code>${escapeHtml(value)}</code></span>`
@@ -387,7 +402,7 @@ export function createProxyServer(options: ProxyServerOptions): ProxyServer {
 
     const matchingRoutes = findRoutes(routes, host, strict);
     if (multiplex && matchingRoutes.length > 1) {
-      if (handlePortlessControl(req, res, host, matchingRoutes, proxyPort, reqTls)) {
+      if (handlePortlessControl(req, res, host, matchingRoutes)) {
         return;
       }
     }
@@ -399,17 +414,7 @@ export function createProxyServer(options: ProxyServerOptions): ProxyServer {
     if (!route) {
       if (multiplex && matchingRoutes.length > 1) {
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(
-          renderSelectorPage(
-            200,
-            host,
-            matchingRoutes,
-            proxyPort,
-            reqTls,
-            undefined,
-            req.url || "/"
-          )
-        );
+        res.end(renderSelectorPage(200, host, matchingRoutes, undefined, req.url || "/"));
         return;
       }
       const safeHost = escapeHtml(host);
