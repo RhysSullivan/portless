@@ -280,8 +280,26 @@ describe("createProxyServer", () => {
       if (!addr || typeof addr === "string") throw new Error("no addr");
 
       const routes: RouteInfo[] = [
-        { id: "one", hostname: "myapp.localhost", port: 4001, pid: 111 },
-        { id: "two", hostname: "myapp.localhost", port: addr.port, pid: 222 },
+        {
+          id: "one",
+          hostname: "myapp.localhost",
+          port: 4001,
+          pid: 111,
+          folder: "api",
+          gitBranch: "feature-auth",
+          cwd: "/repo/apps/api",
+          command: "pnpm dev",
+        },
+        {
+          id: "two",
+          hostname: "myapp.localhost",
+          port: addr.port,
+          pid: 222,
+          folder: "web",
+          gitBranch: "feature-auth",
+          cwd: "/repo/apps/web",
+          command: "next dev",
+        },
       ];
       const server = trackServer(
         createProxyServer({
@@ -298,8 +316,14 @@ describe("createProxyServer", () => {
       });
       expect(res.status).toBe(200);
       expect(res.body).toContain("<main>hello</main>");
-      expect(res.body).toContain("portless myapp.localhost");
+      expect(res.body).toContain("pl-switcher");
+      expect(res.body).toContain('class="pl-icon"');
+      expect(res.body).toContain("@media (prefers-color-scheme:dark)");
+      expect(res.body).toContain("<strong>myapp.localhost</strong>");
       expect(res.body).toContain("/__portless__/select?id=one");
+      expect(res.body).toContain("feature-auth");
+      expect(res.body).toContain("/repo/apps/web");
+      expect(res.body).toContain("next dev");
     });
 
     it("routes wildcard subdomain to matching parent route when strict is false", async () => {

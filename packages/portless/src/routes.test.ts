@@ -436,6 +436,21 @@ describe("RouteStore", () => {
   });
 
   describe("tailscale metadata", () => {
+    it("persists app metadata from addRoute", () => {
+      store.addRoute("myapp.localhost", 4123, process.pid, false, false, {
+        cwd: "/repo/apps/web",
+        folder: "web",
+        gitBranch: "feature-auth",
+        command: "pnpm dev",
+      });
+      const routes = store.loadRoutes();
+      expect(routes).toHaveLength(1);
+      expect(routes[0].cwd).toBe("/repo/apps/web");
+      expect(routes[0].folder).toBe("web");
+      expect(routes[0].gitBranch).toBe("feature-auth");
+      expect(routes[0].command).toBe("pnpm dev");
+    });
+
     it("persists and loads tailscale fields via updateRoute", () => {
       store.addRoute("myapp.localhost", 4123, process.pid);
       store.updateRoute("myapp.localhost", {
