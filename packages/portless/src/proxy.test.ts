@@ -155,8 +155,26 @@ describe("createProxyServer", () => {
 
     it("shows selector for duplicate hostnames in multiplex mode", async () => {
       const routes: RouteInfo[] = [
-        { id: "one", hostname: "myapp.localhost", port: 4001, pid: 111 },
-        { id: "two", hostname: "myapp.localhost", port: 4002, pid: 222 },
+        {
+          id: "one",
+          hostname: "myapp.localhost",
+          port: 4001,
+          pid: 111,
+          folder: "api",
+          gitBranch: "feature-auth",
+          cwd: "/repo/apps/api",
+          command: "pnpm dev",
+        },
+        {
+          id: "two",
+          hostname: "myapp.localhost",
+          port: 4002,
+          pid: 222,
+          folder: "web",
+          gitBranch: "feature-auth",
+          cwd: "/repo/apps/web",
+          command: "next dev",
+        },
       ];
       const server = trackServer(
         createProxyServer({
@@ -172,6 +190,11 @@ describe("createProxyServer", () => {
       expect(res.body).toContain("Select App");
       expect(res.body).toContain("127.0.0.1:4001");
       expect(res.body).toContain("127.0.0.1:4002");
+      expect(res.body).toContain("feature-auth");
+      expect(res.body).toContain("/repo/apps/api");
+      expect(res.body).toContain("pnpm dev");
+      expect(res.body).toContain(">Select</a>");
+      expect(res.body).not.toContain("Clear selection");
     });
 
     it("routes duplicate hostnames by selection cookie in multiplex mode", async () => {
