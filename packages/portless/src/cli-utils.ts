@@ -520,7 +520,6 @@ export async function discoverState(): Promise<{
       const tls = readTlsMarker(LEGACY_SYSTEM_STATE_DIR);
       const tld = readTldFromDir(LEGACY_SYSTEM_STATE_DIR);
       const lanIp = readLanMarker(LEGACY_SYSTEM_STATE_DIR);
-      const multiplex = readMultiplexMarker(LEGACY_SYSTEM_STATE_DIR);
       return {
         dir: LEGACY_SYSTEM_STATE_DIR,
         port: legacyPort,
@@ -528,7 +527,7 @@ export async function discoverState(): Promise<{
         tld,
         lanMode: lanIp !== null || tld === "local",
         lanIp,
-        multiplex,
+        multiplex: false,
       };
     }
   }
