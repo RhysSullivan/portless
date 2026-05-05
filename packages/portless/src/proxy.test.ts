@@ -153,6 +153,32 @@ describe("createProxyServer", () => {
       expect(res.body).toBe("hello from backend");
     });
 
+    it("treats 127.0.0.1 as localhost for shared-port routes", async () => {
+      const backend = trackServer(
+        http.createServer((_req, res) => {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("hello from localhost route");
+        })
+      );
+      await listen(backend);
+      const backendAddr = backend.address();
+      if (!backendAddr || typeof backendAddr === "string") throw new Error("no addr");
+
+      const routes: RouteInfo[] = [{ hostname: "localhost", port: backendAddr.port }];
+      const server = trackServer(
+        createProxyServer({
+          getRoutes: () => routes,
+          proxyPort: TEST_PROXY_PORT,
+          multiplex: true,
+        })
+      );
+      await listen(server);
+
+      const res = await request(server, { host: "127.0.0.1" });
+      expect(res.status).toBe(200);
+      expect(res.body).toBe("hello from localhost route");
+    });
+
     it("shows selector for duplicate hostnames in multiplex mode", async () => {
       const routes: RouteInfo[] = [
         {
@@ -1127,6 +1153,57 @@ describe("createProxyServer", () => {
           path: "/",
           headers: {
             host: "ws.localhost",
+            connection: "Upgrade",
+            upgrade: "websocket",
+          },
+        });
+        req.on("error", () => resolve(false));
+        req.on("upgrade", () => resolve(true));
+        req.setTimeout(2000, () => {
+          req.destroy();
+          resolve(false);
+        });
+        req.end();
+      });
+
+      expect(upgraded).toBe(true);
+    });
+
+    it("treats 127.0.0.1 as localhost for WebSocket shared-port routes", async () => {
+      const backend = trackServer(http.createServer());
+      backend.on("upgrade", (_req, socket) => {
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            "\r\n"
+        );
+        socket.end();
+      });
+      await listen(backend);
+      const backendAddr = backend.address();
+      if (!backendAddr || typeof backendAddr === "string") throw new Error("no addr");
+
+      const routes: RouteInfo[] = [{ hostname: "localhost", port: backendAddr.port }];
+      const server = trackServer(
+        createProxyServer({
+          getRoutes: () => routes,
+          proxyPort: TEST_PROXY_PORT,
+          multiplex: true,
+        })
+      );
+      await listen(server);
+
+      const addr = server.address();
+      if (!addr || typeof addr === "string") throw new Error("no addr");
+
+      const upgraded = await new Promise<boolean>((resolve) => {
+        const req = http.request({
+          hostname: "127.0.0.1",
+          port: addr.port,
+          path: "/",
+          headers: {
+            host: "127.0.0.1",
             connection: "Upgrade",
             upgrade: "websocket",
           },

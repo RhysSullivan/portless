@@ -96,6 +96,10 @@ function getRouteId(route: ProxyRoute): string {
   return route.id || `${route.hostname}:${route.port}:${route.pid ?? 0}`;
 }
 
+function routeHostCandidates(host: string): string[] {
+  return host === "127.0.0.1" ? [host, "localhost"] : [host];
+}
+
 /**
  * Find the route matching a given host. Matches exact hostname first, then
  * falls back to wildcard subdomain matching (e.g. tenant.myapp.localhost
@@ -105,7 +109,8 @@ function getRouteId(route: ProxyRoute): string {
  * subdomain prefixes will not fall back to the base service.
  */
 function findRoutes(routes: ProxyRoute[], host: string, strict?: boolean): ProxyRoute[] {
-  const exact = routes.filter((r) => r.hostname === host);
+  const candidates = routeHostCandidates(host);
+  const exact = routes.filter((r) => candidates.includes(r.hostname));
   if (exact.length > 0 || strict) return exact;
   return routes.filter((r) => host.endsWith("." + r.hostname));
 }
@@ -161,10 +166,18 @@ function renderSelectorPage(
       const detailRows = getRouteDetails(route)
         .map(
           ([label, value]) =>
-            `<span class="selector-row"><span>${escapeHtml(label)}</span><code>${escapeHtml(value)}</code></span>`
+            `<span class="selector-row"><span>${escapeHtml(label)}</span><code>${escapeHtml(
+              value
+            )}</code></span>`
         )
         .join("");
-      return `<li><div class="selector-app${selected}"><div class="selector-top"><span class="name">${escapeHtml(route.folder || route.hostname)}</span><code class="port">${escapeHtml(String(route.port))}</code></div><div class="selector-details">${detailRows}</div><div class="selector-actions"><a class="selector-button" href="${href}">${selected ? "Selected" : "Select"}</a></div></div></li>`;
+      return `<li><div class="selector-app${selected}"><div class="selector-top"><span class="name">${escapeHtml(
+        route.folder || route.hostname
+      )}</span><code class="port">${escapeHtml(
+        String(route.port)
+      )}</code></div><div class="selector-details">${detailRows}</div><div class="selector-actions"><a class="selector-button" href="${href}">${
+        selected ? "Selected" : "Select"
+      }</a></div></div></li>`;
     })
     .join("");
   const body = `<style>
@@ -289,13 +302,27 @@ async function injectSwitcher(
       const detailRows = getRouteDetails(route)
         .map(
           ([label, value]) =>
-            `<span class="pl-row"><span>${escapeHtml(label)}</span><code>${escapeHtml(value)}</code></span>`
+            `<span class="pl-row"><span>${escapeHtml(label)}</span><code>${escapeHtml(
+              value
+            )}</code></span>`
         )
         .join("");
-      return `<div class="pl-app${selected ? " pl-active" : ""}"><div class="pl-app-top"><span class="pl-dot"></span><span class="pl-title">${escapeHtml(route.folder || route.hostname)}</span><span class="pl-port">${escapeHtml(String(route.port))}</span></div><div class="pl-details">${detailRows}</div><div class="pl-actions"><a class="pl-select" href="${href}">${selected ? "Selected" : "Select"}</a></div></div>`;
+      return `<div class="pl-app${
+        selected ? " pl-active" : ""
+      }"><div class="pl-app-top"><span class="pl-dot"></span><span class="pl-title">${escapeHtml(
+        route.folder || route.hostname
+      )}</span><span class="pl-port">${escapeHtml(
+        String(route.port)
+      )}</span></div><div class="pl-details">${detailRows}</div><div class="pl-actions"><a class="pl-select" href="${href}">${
+        selected ? "Selected" : "Select"
+      }</a></div></div>`;
     })
     .join("");
-  const widget = `<div class="pl-switcher" aria-label="Portless app switcher"><input id="pl-switcher-toggle" type="checkbox" class="pl-toggle"><label for="pl-switcher-toggle" class="pl-icon" title="Switch portless app"><span class="pl-mark">p</span><span class="pl-count">${escapeHtml(routeCount)}</span></label><div class="pl-panel"><div class="pl-head"><div><p>portless</p><strong>${escapeHtml(host)}</strong></div><label for="pl-switcher-toggle" aria-label="Collapse portless app switcher">close</label></div><div class="pl-list">${links}</div><div class="pl-foot"><a class="pl-clear" href="${clearHref}">Clear selection</a></div></div><style>
+  const widget = `<div class="pl-switcher" aria-label="Portless app switcher"><input id="pl-switcher-toggle" type="checkbox" class="pl-toggle"><label for="pl-switcher-toggle" class="pl-icon" title="Switch portless app"><span class="pl-mark">p</span><span class="pl-count">${escapeHtml(
+    routeCount
+  )}</span></label><div class="pl-panel"><div class="pl-head"><div><p>portless</p><strong>${escapeHtml(
+    host
+  )}</strong></div><label for="pl-switcher-toggle" aria-label="Collapse portless app switcher">close</label></div><div class="pl-list">${links}</div><div class="pl-foot"><a class="pl-clear" href="${clearHref}">Clear selection</a></div></div><style>
 .pl-switcher{--pl-bg:#fff;--pl-fg:#111;--pl-muted:#666;--pl-soft:#f6f6f6;--pl-border:rgba(0,0,0,.13);--pl-active:#eef6ff;--pl-active-border:#60a5fa;position:fixed;right:16px;bottom:16px;z-index:2147483647;font:13px/1.35 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--pl-fg)}
 @media (prefers-color-scheme:dark){.pl-switcher{--pl-bg:#0b0b0b;--pl-fg:#f4f4f5;--pl-muted:#a1a1aa;--pl-soft:#18181b;--pl-border:rgba(255,255,255,.16);--pl-active:#082f49;--pl-active-border:#38bdf8}}
 .pl-switcher *{box-sizing:border-box}
@@ -391,7 +418,9 @@ export function createProxyServer(options: ProxyServerOptions): ProxyServer {
           "Loop Detected",
           `<div class="content"><p class="desc">This request has passed through portless ${hops} times. This usually means a dev server (Vite, webpack, etc.) is proxying requests back through portless without rewriting the Host header.</p><div class="section"><p class="label">Fix: add changeOrigin to your proxy config</p><pre class="terminal">proxy: {
   "/api": {
-    target: "${reqTls ? "https" : "http"}://&lt;backend&gt;${escapeHtml(tldSuffix)}${reqTls ? "" : ":&lt;port&gt;"}",
+    target: "${reqTls ? "https" : "http"}://&lt;backend&gt;${escapeHtml(tldSuffix)}${
+            reqTls ? "" : ":&lt;port&gt;"
+          }",
     changeOrigin: true,
   },
 }</pre></div></div>`
@@ -422,7 +451,18 @@ export function createProxyServer(options: ProxyServerOptions): ProxyServer {
       const safeSuggestion = escapeHtml(strippedHost);
       const routesList =
         routes.length > 0
-          ? `<div class="section"><p class="label">Active apps</p><ul class="card">${routes.map((r) => `<li><a href="${escapeHtml(formatUrl(r.hostname, proxyPort, reqTls))}" class="card-link"><span class="name">${escapeHtml(r.hostname)}</span><span class="meta"><code class="port">127.0.0.1:${escapeHtml(String(r.port))}</code><span class="arrow">${ARROW_SVG}</span></span></a></li>`).join("")}</ul></div>`
+          ? `<div class="section"><p class="label">Active apps</p><ul class="card">${routes
+              .map(
+                (r) =>
+                  `<li><a href="${escapeHtml(
+                    formatUrl(r.hostname, proxyPort, reqTls)
+                  )}" class="card-link"><span class="name">${escapeHtml(
+                    r.hostname
+                  )}</span><span class="meta"><code class="port">127.0.0.1:${escapeHtml(
+                    String(r.port)
+                  )}</code><span class="arrow">${ARROW_SVG}</span></span></a></li>`
+              )
+              .join("")}</ul></div>`
           : '<p class="empty">No apps running.</p>';
       res.writeHead(404, { "Content-Type": "text/html" });
       res.end(
@@ -716,7 +756,9 @@ export function createProxyServer(options: ProxyServerOptions): ProxyServer {
     // demuxes TLS and plain HTTP on a single listener (peek at first byte).
     const plainServer = http.createServer((req, res) => {
       const host = getRequestHost(req).split(":")[0] || "localhost";
-      const location = `https://${host}${proxyPort === 443 ? "" : `:${proxyPort}`}${req.url || "/"}`;
+      const location = `https://${host}${proxyPort === 443 ? "" : `:${proxyPort}`}${
+        req.url || "/"
+      }`;
       res.writeHead(302, { Location: location, [PORTLESS_HEADER]: "1" });
       res.end();
     });
