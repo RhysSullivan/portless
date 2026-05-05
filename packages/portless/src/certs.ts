@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import * as tls from "node:tls";
+import * as net from "node:net";
 import { execFile as execFileCb, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { fixOwnership } from "./utils.js";
@@ -180,7 +181,11 @@ function isCertValid(certPath: string): boolean {
 function isCertSansComplete(certPath: string): boolean {
   try {
     const text = openssl(["x509", "-in", certPath, "-noout", "-text"]);
-    return /DNS:\*\.local\b/.test(text);
+    return (
+      /DNS:\*\.local\b/.test(text) &&
+      /IP Address:127\.0\.0\.1\b/.test(text) &&
+      /IP Address:0:0:0:0:0:0:0:1\b/.test(text)
+    );
   } catch {
     return false;
   }
@@ -302,7 +307,8 @@ function generateCA(stateDir: string): { certPath: string; keyPath: string } {
 
 /**
  * Generate a server certificate signed by the local CA.
- * Covers localhost, *.localhost, and *.local via Subject Alternative Names.
+ * Covers localhost, loopback IPs, *.localhost, and *.local via Subject
+ * Alternative Names.
  */
 function generateServerCert(stateDir: string): { certPath: string; keyPath: string } {
   const caKeyPath = path.join(stateDir, CA_KEY_FILE);
@@ -319,7 +325,7 @@ function generateServerCert(stateDir: string): { certPath: string; keyPath: stri
   openssl(["req", "-new", "-key", serverKeyPath, "-out", csrPath, "-subj", "/CN=localhost"]);
 
   // Write extension config for SANs
-  const sans = ["DNS:localhost", "DNS:*.localhost", "DNS:*.local"];
+  const sans = ["DNS:localhost", "IP:127.0.0.1", "IP:::1", "DNS:*.localhost", "DNS:*.local"];
   fs.writeFileSync(
     extPath,
     [
@@ -629,6 +635,20 @@ function sanitizeHostForFilename(hostname: string): string {
  */
 const MAX_CN_LENGTH = 64;
 
+function sanForHostname(hostname: string): string {
+  return net.isIP(hostname) ? `IP:${hostname}` : `DNS:${hostname}`;
+}
+
+function certCoversHostname(certPath: string, hostname: string): boolean {
+  try {
+    const cert = new crypto.X509Certificate(fs.readFileSync(certPath));
+    const expected = net.isIP(hostname) ? `IP Address:${hostname}` : `DNS:${hostname}`;
+    return cert.subjectAltName?.includes(expected) ?? false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Generate a certificate for a specific hostname, signed by the local CA.
  * Certs are cached on disk in the host-certs subdirectory.
@@ -666,7 +686,7 @@ async function generateHostCertAsync(
 
   // Build SAN list: include the exact hostname plus a wildcard at the same level
   // e.g., for "chat.json-render2.localhost" -> also add "*.json-render2.localhost"
-  const sans = [`DNS:${hostname}`];
+  const sans = [sanForHostname(hostname)];
   const parts = hostname.split(".");
   if (parts.length >= 2) {
     // Add a wildcard for sibling subdomains at the same level
@@ -791,7 +811,8 @@ export function createSNICallback(
       fileExists(certPath) &&
       fileExists(keyPath) &&
       isCertValid(certPath) &&
-      isCertSignatureStrong(certPath)
+      isCertSignatureStrong(certPath) &&
+      certCoversHostname(certPath, servername)
     ) {
       try {
         const hostCert = fs.readFileSync(certPath);

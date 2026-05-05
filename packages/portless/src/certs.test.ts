@@ -66,11 +66,12 @@ describe("ensureCerts", () => {
     expect(serverCert.fingerprint).not.toBe(caCert.fingerprint);
   });
 
-  it("server cert covers localhost and *.localhost via SAN", () => {
+  it("server cert covers localhost, loopback IP, and *.localhost via SAN", () => {
     const result = ensureCerts(tmpDir);
     const cert = new crypto.X509Certificate(fs.readFileSync(result.certPath));
 
     expect(cert.subjectAltName).toContain("DNS:localhost");
+    expect(cert.subjectAltName).toContain("IP Address:127.0.0.1");
     expect(cert.subjectAltName).toContain("DNS:*.localhost");
   });
 
@@ -247,6 +248,25 @@ describe("createSNICallback", () => {
 
     const cert = new crypto.X509Certificate(fs.readFileSync(hostCertPath));
     expect(cert.subjectAltName).toContain("DNS:myapp.localhost");
+  });
+
+  it("generates IP SANs for loopback IP SNI certificates", async () => {
+    const sniCallback = createSNICallback(tmpDir, defaultCert, defaultKey);
+    const ctx = await new Promise<tls.SecureContext | undefined>((resolve, reject) => {
+      sniCallback("127.0.0.1", (err, ctx) => {
+        if (err) reject(err);
+        else resolve(ctx);
+      });
+    });
+
+    expect(ctx).toBeDefined();
+
+    const hostCertPath = path.join(tmpDir, "host-certs", "127_0_0_1.pem");
+    expect(fs.existsSync(hostCertPath)).toBe(true);
+
+    const cert = new crypto.X509Certificate(fs.readFileSync(hostCertPath));
+    expect(cert.subjectAltName).toContain("IP Address:127.0.0.1");
+    expect(cert.subjectAltName).not.toContain("DNS:127.0.0.1");
   });
 
   it("generates per-hostname cert for multi-level subdomains", async () => {
