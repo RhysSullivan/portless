@@ -154,7 +154,8 @@ function renderSelectorPage(
   host: string,
   routes: ProxyRoute[],
   currentId?: string,
-  next = "/"
+  next = "/",
+  canKill = false
 ): string {
   const safeHost = escapeHtml(host);
   const safeNext = encodeURIComponent(next || "/");
@@ -163,6 +164,11 @@ function renderSelectorPage(
       const id = getRouteId(route);
       const selected = currentId === id ? " selected" : "";
       const href = `${CONTROL_PREFIX}/select?id=${encodeURIComponent(id)}&next=${safeNext}`;
+      const killAction = `${CONTROL_PREFIX}/kill?id=${encodeURIComponent(id)}&next=${safeNext}`;
+      const killButton =
+        canKill && route.pid !== 0
+          ? `<form class="selector-kill-form" method="post" action="${killAction}"><button class="selector-button selector-button-danger" type="submit">Kill</button></form>`
+          : "";
       const detailRows = getRouteDetails(route)
         .map(
           ([label, value]) =>
@@ -177,7 +183,7 @@ function renderSelectorPage(
         String(route.port)
       )}</code></div><div class="selector-details">${detailRows}</div><div class="selector-actions"><a class="selector-button" href="${href}">${
         selected ? "Selected" : "Select"
-      }</a></div></div></li>`;
+      }</a>${killButton}</div></div></li>`;
     })
     .join("");
   const body = `<style>
@@ -188,9 +194,12 @@ function renderSelectorPage(
 .selector-row{min-width:0}
 .selector-row span{display:block;margin-bottom:2px;color:var(--text-3);font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0}
 .selector-row code{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg);font-family:var(--font-mono);font-size:12px}
-.selector-actions{display:flex;justify-content:flex-end;margin-top:12px}
+.selector-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
 .selector-button{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:0 12px;border-radius:6px;background:var(--fg);color:var(--bg);font-size:13px;font-weight:500;text-decoration:none}
 .selector-app.selected .selector-button{border:1px solid var(--border);background:transparent;color:var(--fg)}
+.selector-kill-form{margin:0}
+.selector-kill-form .selector-button{border:1px solid var(--border);background:transparent;color:#b91c1c;cursor:pointer;font:inherit}
+.selector-kill-form .selector-button:hover{border-color:#ef4444;background:#fef2f2}
 @media (max-width:520px){.selector-details{grid-template-columns:1fr}}
 </style><div class="content"><p class="desc">Multiple apps are registered for <strong>${safeHost}</strong>. Choose which one this browser should use.</p><div class="section"><p class="label">Available apps</p><ul class="card">${items}</ul></div></div>`;
   return renderPage(status, "Select App", body);
@@ -227,7 +236,8 @@ function handlePortlessControl(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   host: string,
-  routes: ProxyRoute[]
+  routes: ProxyRoute[],
+  onKillRoute?: (route: ProxyRoute) => boolean
 ): boolean {
   const url = req.url || "/";
   if (!isPortlessPath(url)) return false;
@@ -248,9 +258,33 @@ function handlePortlessControl(
     res.end();
     return true;
   }
+  if (url.startsWith(`${CONTROL_PREFIX}/kill`)) {
+    const parsed = new URL(url, "http://portless.local");
+    const id = parsed.searchParams.get("id");
+    const route = routes.find((candidate) => getRouteId(candidate) === id);
+    if (!onKillRoute) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Route killing is not available");
+      return true;
+    }
+    if (req.method !== "POST") {
+      res.writeHead(405, { Allow: "POST", "Content-Type": "text/plain" });
+      res.end("Use POST to kill a route");
+      return true;
+    }
+    if (!route || route.pid === 0 || !onKillRoute(route)) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Route not found");
+      return true;
+    }
+    clearSelectionCookie(res);
+    res.writeHead(302, { Location: getRedirectTarget(url) });
+    res.end();
+    return true;
+  }
   const currentId = parseCookies(req.headers.cookie)[SELECTOR_COOKIE];
   res.writeHead(200, { "Content-Type": "text/html" });
-  res.end(renderSelectorPage(200, host, routes, currentId, getRedirectTarget(url)));
+  res.end(renderSelectorPage(200, host, routes, currentId, getRedirectTarget(url), !!onKillRoute));
   return true;
 }
 
@@ -284,7 +318,8 @@ async function injectSwitcher(
   host: string,
   routes: ProxyRoute[],
   currentRoute: ProxyRoute,
-  reqUrl: string | undefined
+  reqUrl: string | undefined,
+  canKill = false
 ): Promise<Buffer> {
   const encoding = String(headers["content-encoding"] || "").toLowerCase();
   const raw = Buffer.concat(chunks);
@@ -299,6 +334,11 @@ async function injectSwitcher(
       const id = getRouteId(route);
       const selected = id === currentId;
       const href = `${CONTROL_PREFIX}/select?id=${encodeURIComponent(id)}&next=${next}`;
+      const killAction = `${CONTROL_PREFIX}/kill?id=${encodeURIComponent(id)}&next=${next}`;
+      const killButton =
+        canKill && route.pid !== 0
+          ? `<form class="pl-kill-form" method="post" action="${killAction}"><button class="pl-kill" type="submit">Kill</button></form>`
+          : "";
       const detailRows = getRouteDetails(route)
         .map(
           ([label, value]) =>
@@ -315,7 +355,7 @@ async function injectSwitcher(
         String(route.port)
       )}</span></div><div class="pl-details">${detailRows}</div><div class="pl-actions"><a class="pl-select" href="${href}">${
         selected ? "Selected" : "Select"
-      }</a></div></div>`;
+      }</a>${killButton}</div></div>`;
     })
     .join("");
   const widget = `<div class="pl-switcher" aria-label="Portless app switcher"><input id="pl-switcher-toggle" type="checkbox" class="pl-toggle"><label for="pl-switcher-toggle" class="pl-icon" title="Switch portless app"><span class="pl-mark">p</span><span class="pl-count">${escapeHtml(
@@ -350,10 +390,13 @@ async function injectSwitcher(
 .pl-row{min-width:0}
 .pl-row span{display:block;margin-bottom:2px;color:var(--pl-muted);font-size:10px;font-weight:650;text-transform:uppercase;letter-spacing:0}
 .pl-row code{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--pl-fg);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}
-.pl-actions{display:flex;justify-content:flex-end;margin-top:10px}
-.pl-select,.pl-clear{display:inline-flex;align-items:center;justify-content:center;min-block-size:30px;border-radius:6px;text-decoration:none;font-weight:700}
+.pl-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+.pl-select,.pl-clear,.pl-kill{display:inline-flex;align-items:center;justify-content:center;min-block-size:30px;border-radius:6px;text-decoration:none;font-weight:700}
 .pl-select{padding:0 11px;background:var(--pl-fg);color:var(--pl-bg)}
 .pl-active .pl-select{border:1px solid var(--pl-border);background:transparent;color:var(--pl-fg)}
+.pl-kill-form{margin:0}
+.pl-kill{padding:0 10px;border:1px solid var(--pl-border);background:transparent;color:#ef4444;font:inherit;cursor:pointer}
+.pl-kill:hover{border-color:#ef4444;background:rgba(239,68,68,.1)}
 .pl-foot{display:flex;justify-content:flex-end;padding:0 10px 10px}
 .pl-clear{padding:0 10px;border:1px solid var(--pl-border);color:var(--pl-muted);background:transparent}
 .pl-clear:hover{color:var(--pl-fg);border-color:var(--pl-active-border)}
@@ -387,6 +430,7 @@ export function createProxyServer(options: ProxyServerOptions): ProxyServer {
     strict = true,
     multiplex = false,
     onError = (msg: string) => console.error(msg),
+    onKillRoute,
     tls,
   } = options;
   const tldSuffix = `.${tld}`;
@@ -431,7 +475,7 @@ export function createProxyServer(options: ProxyServerOptions): ProxyServer {
 
     const matchingRoutes = findRoutes(routes, host, strict);
     if (multiplex && matchingRoutes.length > 1) {
-      if (handlePortlessControl(req, res, host, matchingRoutes)) {
+      if (handlePortlessControl(req, res, host, matchingRoutes, onKillRoute)) {
         return;
       }
     }
@@ -443,7 +487,9 @@ export function createProxyServer(options: ProxyServerOptions): ProxyServer {
     if (!route) {
       if (multiplex && matchingRoutes.length > 1) {
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(renderSelectorPage(200, host, matchingRoutes, undefined, req.url || "/"));
+        res.end(
+          renderSelectorPage(200, host, matchingRoutes, undefined, req.url || "/", !!onKillRoute)
+        );
         return;
       }
       const safeHost = escapeHtml(host);
@@ -555,7 +601,15 @@ export function createProxyServer(options: ProxyServerOptions): ProxyServer {
               res.end();
               return;
             }
-            injectSwitcher(chunks, responseHeaders, host, matchingRoutes, route, req.url)
+            injectSwitcher(
+              chunks,
+              responseHeaders,
+              host,
+              matchingRoutes,
+              route,
+              req.url,
+              !!onKillRoute
+            )
               .then((body) => {
                 delete responseHeaders["transfer-encoding"];
                 responseHeaders["content-length"] = String(body.length);

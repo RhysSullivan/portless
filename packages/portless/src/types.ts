@@ -27,6 +27,8 @@ export interface ProxyServerOptions {
   multiplex?: boolean;
   /** Optional error logger; defaults to console.error. */
   onError?: (message: string) => void;
+  /** Optional route killer used by the multiplex selector. */
+  onKillRoute?: (route: RouteInfo) => boolean;
   /** When provided, enables HTTP/2 over TLS (HTTPS). */
   tls?: {
     cert: Buffer;

@@ -288,6 +288,60 @@ describe("createProxyServer", () => {
       expect(res.headers["set-cookie"]?.[0]).toContain("portless_app=two");
     });
 
+    it("shows kill buttons when multiplex route killing is available", async () => {
+      const routes: RouteInfo[] = [
+        { id: "one", hostname: "myapp.localhost", port: 4001, pid: 111 },
+        { id: "alias", hostname: "myapp.localhost", port: 4002, pid: 0 },
+      ];
+      const server = trackServer(
+        createProxyServer({
+          getRoutes: () => routes,
+          proxyPort: TEST_PROXY_PORT,
+          multiplex: true,
+          onKillRoute: () => true,
+        })
+      );
+      await listen(server);
+
+      const res = await request(server, { host: "myapp.localhost" });
+      expect(res.status).toBe(200);
+      expect(res.body).toContain('method="post"');
+      expect(res.body).toContain("/__portless__/kill?id=one");
+      expect(res.body).toContain(">Kill</button>");
+      expect(res.body).not.toContain("/__portless__/kill?id=alias");
+    });
+
+    it("kills a multiplex route via the selector control endpoint", async () => {
+      const routes: RouteInfo[] = [
+        { id: "one", hostname: "myapp.localhost", port: 4001, pid: 111 },
+        { id: "two", hostname: "myapp.localhost", port: 4002, pid: 222 },
+      ];
+      const killed: RouteInfo[] = [];
+      const server = trackServer(
+        createProxyServer({
+          getRoutes: () => routes,
+          proxyPort: TEST_PROXY_PORT,
+          multiplex: true,
+          onKillRoute: (route) => {
+            killed.push(route);
+            return true;
+          },
+        })
+      );
+      await listen(server);
+
+      const res = await request(server, {
+        host: "myapp.localhost",
+        path: "/__portless__/kill?id=two&next=/dashboard",
+        method: "POST",
+        headers: { cookie: "portless_app=two" },
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe("/dashboard");
+      expect(res.headers["set-cookie"]?.[0]).toContain("portless_app=;");
+      expect(killed).toEqual([routes[1]]);
+    });
+
     it("does not reserve the control path when multiplex has only one matching route", async () => {
       const backend = trackServer(
         http.createServer((_req, res) => {
@@ -355,6 +409,7 @@ describe("createProxyServer", () => {
           getRoutes: () => routes,
           proxyPort: TEST_PROXY_PORT,
           multiplex: true,
+          onKillRoute: () => true,
         })
       );
       await listen(server);
@@ -372,6 +427,8 @@ describe("createProxyServer", () => {
       expect(res.body).toContain("/__portless__/select?id=one");
       expect(res.body).toContain(">Select</a>");
       expect(res.body).toContain(">Selected</a>");
+      expect(res.body).toContain("/__portless__/kill?id=one");
+      expect(res.body).toContain(">Kill</button>");
       expect(res.body).toContain("/__portless__/clear?next=%2F");
       expect(res.body).toContain("Clear selection");
       expect(res.body).toContain("feature-auth");

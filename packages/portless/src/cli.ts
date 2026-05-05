@@ -311,7 +311,9 @@ function getProxyConfigMismatchMessages(
 
   if (explicit.lanIp && desiredConfig.lanIp !== actualConfig.lanIp) {
     messages.push(
-      `requested LAN IP ${desiredConfig.lanIp}, but the running proxy is using ${actualConfig.lanIp ?? "auto-detected LAN mode"}`
+      `requested LAN IP ${desiredConfig.lanIp}, but the running proxy is using ${
+        actualConfig.lanIp ?? "auto-detected LAN mode"
+      }`
     );
   }
 
@@ -365,7 +367,9 @@ function formatProxyStartCommand(proxyPort: number, config: ProxyConfig): string
     includePort: proxyPort !== defaultPort,
     proxyPort,
   });
-  return `${needsSudo ? "sudo " : ""}portless proxy start${args.length > 0 ? ` ${args.join(" ")}` : ""}`;
+  return `${needsSudo ? "sudo " : ""}portless proxy start${
+    args.length > 0 ? ` ${args.join(" ")}` : ""
+  }`;
 }
 
 function printProxyConfigMismatch(
@@ -575,6 +579,19 @@ function startProxyServer(
     strict,
     multiplex,
     onError: (msg) => console.error(colors.red(msg)),
+    onKillRoute: (route) => {
+      if (!route.pid) return false;
+      try {
+        process.kill(route.pid, "SIGTERM");
+      } catch {
+        // The owner may have exited between rendering and clicking. Removing
+        // the route keeps the selector from offering a dead target.
+      }
+      store.removeRoute(route.hostname, route.pid, route.port);
+      reloadRoutes();
+      console.log(colors.yellow(`Killed ${route.hostname} (PID ${route.pid})`));
+      return true;
+    },
     tls: tlsOptions,
   });
 
@@ -868,7 +885,9 @@ function listRoutes(store: RouteStore, proxyPort: number, tls: boolean): void {
     const url = formatUrl(route.hostname, proxyPort, tls);
     const label = route.pid === 0 ? "(alias)" : `(pid ${route.pid})`;
     console.log(
-      `  ${colors.cyan(url)}  ${colors.gray("->")}  ${colors.white(`localhost:${route.port}`)}  ${colors.gray(label)}`
+      `  ${colors.cyan(url)}  ${colors.gray("->")}  ${colors.white(
+        `localhost:${route.port}`
+      )}  ${colors.gray(label)}`
     );
     if (route.tailscaleUrl) {
       const tsLabel = route.tailscaleFunnel ? "funnel" : "tailscale";
@@ -1289,7 +1308,9 @@ async function runApp(
     : "";
   console.log(
     chalk.gray(
-      `Running: PORT=${port}${hostBind ? ` HOST=${hostBind}` : ""} PORTLESS_URL=${finalUrl}${caFragment} ${commandArgs.join(" ")}\n`
+      `Running: PORT=${port}${
+        hostBind ? ` HOST=${hostBind}` : ""
+      } PORTLESS_URL=${finalUrl}${caFragment} ${commandArgs.join(" ")}\n`
     )
   );
 
@@ -1529,7 +1550,9 @@ function parseAppArgs(args: string[]): ParsedAppArgs {
 
 function printHelp(): void {
   console.log(`
-${colors.bold("portless")} - Replace port numbers with stable, named .localhost URLs. For humans and agents.
+${colors.bold(
+  "portless"
+)} - Replace port numbers with stable, named .localhost URLs. For humans and agents.
 
 Eliminates port conflicts, memorizing port numbers, and cookie/storage
 clashes by giving each dev server a stable .localhost URL.
@@ -1546,12 +1569,16 @@ ${colors.bold("Usage:")}
   ${colors.cyan("portless <name> <cmd>")}            Run with an explicit app name
   ${colors.cyan("portless proxy start")}             Start the proxy (HTTPS on port 443, daemon)
   ${colors.cyan("portless proxy stop")}              Stop the proxy
-  ${colors.cyan("portless get <name>")}              Print URL for a service (for cross-service refs)
+  ${colors.cyan(
+    "portless get <name>"
+  )}              Print URL for a service (for cross-service refs)
   ${colors.cyan("portless alias <name> <port>")}     Register a static route (e.g. for Docker)
   ${colors.cyan("portless alias --remove <name>")}   Remove a static route
   ${colors.cyan("portless list")}                    Show active routes
   ${colors.cyan("portless trust")}                   Add local CA to system trust store
-  ${colors.cyan("portless clean")}                   Remove portless state, trust entry, and hosts block
+  ${colors.cyan(
+    "portless clean"
+  )}                   Remove portless state, trust entry, and hosts block
   ${colors.cyan("portless prune")}                   Kill orphaned dev servers from crashed sessions
   ${colors.cyan("portless hosts sync")}              Add routes to ${HOSTS_DISPLAY} (fixes Safari)
   ${colors.cyan("portless hosts clean")}             Remove portless entries from ${HOSTS_DISPLAY}
@@ -1838,7 +1865,9 @@ ${colors.bold("Options:")}
   } else {
     console.warn(
       colors.yellow(
-        `Could not remove portless entries from ${HOSTS_DISPLAY}${isWindows ? " (run as Administrator)." : "."}`
+        `Could not remove portless entries from ${HOSTS_DISPLAY}${
+          isWindows ? " (run as Administrator)." : "."
+        }`
       )
     );
   }
@@ -1849,7 +1878,9 @@ ${colors.bold("Options:")}
 async function handlePrune(args: string[]): Promise<void> {
   if (args[1] === "--help" || args[1] === "-h") {
     console.log(`
-${colors.bold("portless prune")} - Kill orphaned dev servers left behind by crashed portless sessions.
+${colors.bold(
+  "portless prune"
+)} - Kill orphaned dev servers left behind by crashed portless sessions.
 
 When portless is killed with SIGKILL (kill -9) or crashes, child dev servers
 may survive and continue holding their ports. This command finds those orphans
@@ -2205,9 +2236,13 @@ ${colors.bold("Usage:")}
   ${colors.cyan("portless proxy start --foreground")}   Start in foreground (for debugging)
   ${colors.cyan("portless proxy start -p 1355")}        Start on a custom port (no sudo)
   ${colors.cyan("portless proxy start --tld test")}     Use .test instead of .localhost
-  ${colors.cyan("portless proxy start --wildcard")}     Allow unregistered subdomains to fall back to parent
+  ${colors.cyan(
+    "portless proxy start --wildcard"
+  )}     Allow unregistered subdomains to fall back to parent
   ${colors.cyan("portless proxy start --multiplex")}    Allow multiple apps to share one hostname
-  ${colors.cyan("portless proxy start --shared-port")}  Single host:port (default 3000) shared by every app
+  ${colors.cyan(
+    "portless proxy start --shared-port"
+  )}  Single host:port (default 3000) shared by every app
   ${colors.cyan("portless proxy stop")}                 Stop the proxy
 
 ${colors.bold("LAN mode (--lan):")}
@@ -3122,7 +3157,7 @@ async function handleDefaultMulti(
         pkgLabel = rel.replace(/\//g, "-");
       }
       name = pkgLabel === projectName ? projectName : `${pkgLabel}.${projectName}`;
-      label = pkg.scope ? `@${pkg.scope}/${pkg.name}` : (pkg.name ?? rel);
+      label = pkg.scope ? `@${pkg.scope}/${pkg.name}` : pkg.name ?? rel;
     }
 
     apps.push({ pkg, name, label, commandArgs, appPort: appOverride.appPort, proxied });
@@ -3267,10 +3302,10 @@ async function runWithTurbo(
   const turboArgs = useRootScript
     ? [pm, "run", scriptName, ...extraArgs]
     : pm === "npm"
-      ? ["npx", "turbo", "run", scriptName, ...extraArgs]
-      : pm === "bun"
-        ? ["bunx", "turbo", "run", scriptName, ...extraArgs]
-        : [pm, "exec", "turbo", "run", scriptName, ...extraArgs];
+    ? ["npx", "turbo", "run", scriptName, ...extraArgs]
+    : pm === "bun"
+    ? ["bunx", "turbo", "run", scriptName, ...extraArgs]
+    : [pm, "exec", "turbo", "run", scriptName, ...extraArgs];
 
   const turboChild = spawn(turboArgs[0], turboArgs.slice(1), {
     stdio: "inherit",
@@ -3412,7 +3447,9 @@ async function runWithDirectSpawn(
   if (failed.length > 0) {
     console.error(
       colors.red(
-        `\n${failed.length} app${failed.length === 1 ? "" : "s"} exited with errors: ${failed.map(([name, code]) => `${name} (${code})`).join(", ")}`
+        `\n${failed.length} app${failed.length === 1 ? "" : "s"} exited with errors: ${failed
+          .map(([name, code]) => `${name} (${code})`)
+          .join(", ")}`
       )
     );
     process.exit(1);
