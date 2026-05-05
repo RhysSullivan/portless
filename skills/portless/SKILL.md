@@ -145,6 +145,19 @@ portless myapp vite dev
 
 When one app is registered for the hostname, portless routes directly to it. When multiple apps are registered, portless shows a selector page with host, port, PID, git branch, folder, and command details for each app, then stores the selection in a host-scoped cookie. HTML responses include a collapsed switcher that follows the system theme. Expand it to change or clear the selected app and inspect the same details. Use `PORTLESS_MULTIPLEX=1` to make this the default proxy mode.
 
+### Shared-port mode (no subdomains)
+
+When you don't want named subdomains at all and just want every dev server behind one fixed `host:port` (e.g. `localhost:3000`), use `--shared-port`. Every app registers under the bare `localhost` hostname and the multiplex selector picks between them.
+
+```bash
+portless proxy start --shared-port           # listens on http://localhost:3000
+portless myapp next dev
+portless backend pnpm start
+# Visit http://localhost:3000 -> selector lets you choose myapp or backend.
+```
+
+`--shared-port` defaults the proxy port to 3000 and implies `--multiplex`. Pair with `-p <port>` to use a different port. The app `<name>` survives only as a label in the selector and switcher UI; routing is by cookie, not subdomain. Use `PORTLESS_SHARED_PORT=1` to make this the default. Tradeoff vs named-URL mode: no per-app stable URL, no `api.myapp.localhost` cross-routing, no Tailscale subdomain story. Cannot be combined with `--lan`.
+
 ### Git worktrees
 
 `portless run` automatically detects git worktrees. In a linked worktree, the branch name is prepended as a subdomain prefix so each worktree gets a unique URL:
@@ -183,20 +196,21 @@ Portless stores its state (routes, PID file, port file) in `~/.portless`. Overri
 
 ### Environment variables
 
-| Variable              | Description                                                                 |
-| --------------------- | --------------------------------------------------------------------------- |
-| `PORTLESS_PORT`       | Override the default proxy port (default: 443 with HTTPS, 80 without)       |
-| `PORTLESS_APP_PORT`   | Use a fixed port for the app (skip auto-assignment)                         |
-| `PORTLESS_HTTPS`      | HTTPS on by default; set to `0` to disable (same as `--no-tls`)             |
-| `PORTLESS_LAN`        | Set to `1` to always enable LAN mode (auto-detects LAN IP)                  |
-| `PORTLESS_TLD`        | Use a custom TLD instead of localhost (e.g. test)                           |
-| `PORTLESS_WILDCARD`   | Set to `1` to allow unregistered subdomains to fall back to parent          |
-| `PORTLESS_MULTIPLEX`  | Set to `1` to allow multiple apps to share the same hostname                |
-| `PORTLESS_SYNC_HOSTS` | Set to `0` to disable auto-sync of /etc/hosts (on by default)               |
-| `PORTLESS_TAILSCALE`  | Set to `1` to share apps on your Tailscale network (same as `--tailscale`)  |
-| `PORTLESS_FUNNEL`     | Set to `1` to share apps publicly via Tailscale Funnel (same as `--funnel`) |
-| `PORTLESS_STATE_DIR`  | Override the state directory                                                |
-| `PORTLESS=0`          | Bypass the proxy, run the command directly                                  |
+| Variable               | Description                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `PORTLESS_PORT`        | Override the default proxy port (default: 443 with HTTPS, 80 without)                 |
+| `PORTLESS_APP_PORT`    | Use a fixed port for the app (skip auto-assignment)                                   |
+| `PORTLESS_HTTPS`       | HTTPS on by default; set to `0` to disable (same as `--no-tls`)                       |
+| `PORTLESS_LAN`         | Set to `1` to always enable LAN mode (auto-detects LAN IP)                            |
+| `PORTLESS_TLD`         | Use a custom TLD instead of localhost (e.g. test)                                     |
+| `PORTLESS_WILDCARD`    | Set to `1` to allow unregistered subdomains to fall back to parent                    |
+| `PORTLESS_MULTIPLEX`   | Set to `1` to allow multiple apps to share the same hostname                          |
+| `PORTLESS_SHARED_PORT` | Set to `1` to route every app through one host:port (default 3000); implies multiplex |
+| `PORTLESS_SYNC_HOSTS`  | Set to `0` to disable auto-sync of /etc/hosts (on by default)                         |
+| `PORTLESS_TAILSCALE`   | Set to `1` to share apps on your Tailscale network (same as `--tailscale`)            |
+| `PORTLESS_FUNNEL`      | Set to `1` to share apps publicly via Tailscale Funnel (same as `--funnel`)           |
+| `PORTLESS_STATE_DIR`   | Override the state directory                                                          |
+| `PORTLESS=0`           | Bypass the proxy, run the command directly                                            |
 
 ### HTTP/2 + HTTPS
 
@@ -276,6 +290,7 @@ Each `--tailscale` app is root-mounted on its own Tailscale HTTPS port (443, the
 | `portless proxy start --foreground`    | Start the proxy in foreground (for debugging)                  |
 | `portless proxy start --wildcard`      | Allow unregistered subdomains to fall back to parent route     |
 | `portless proxy start --multiplex`     | Allow multiple apps to share the same hostname                 |
+| `portless proxy start --shared-port`   | Single host:port (default 3000) shared by every app, multiplex |
 | `portless proxy stop`                  | Stop the proxy                                                 |
 | `portless alias <name> <port>`         | Register a static route (e.g. for Docker containers)           |
 | `portless alias <name> <port> --force` | Overwrite an existing route                                    |

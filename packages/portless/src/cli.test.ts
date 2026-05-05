@@ -1296,6 +1296,23 @@ describe("CLI", () => {
       expect(stdout.trim()).toBe("1");
     });
 
+    it("--shared-port sets PORTLESS_SHARED_PORT and implies multiplex", () => {
+      const { status, stdout } = run(
+        [
+          "--shared-port",
+          "run",
+          process.execPath,
+          "-e",
+          "console.log(process.env.PORTLESS_SHARED_PORT, process.env.PORTLESS_MULTIPLEX)",
+        ],
+        {
+          env: { PORTLESS: "0" },
+        }
+      );
+      expect(status).toBe(0);
+      expect(stdout.trim()).toBe("1 1");
+    });
+
     it("--name overrides portless.json name", () => {
       fs.writeFileSync(
         path.join(tmpDir, "package.json"),

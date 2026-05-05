@@ -190,6 +190,19 @@ portless myapp vite dev
 
 If only one `myapp.localhost` app is running, requests go straight to it. If more than one app is running, portless shows a selector page the first time you visit the hostname, including host, port, PID, git branch, folder, and command details for each app. Your choice is stored in a host-scoped cookie so page loads, assets, API requests, and WebSockets keep going to the selected app. HTML responses also get a collapsed portless switcher that follows the system theme. Expand it to change or clear the selected app and inspect the same details.
 
+## Shared-port mode
+
+If you don't want the named-subdomain story at all and just want every dev server to live behind a single fixed `host:port` (e.g. `localhost:3000`), use `--shared-port`. Every app registers under the bare `localhost` hostname and the multiplex selector picks between them.
+
+```bash
+portless proxy start --shared-port           # listens on http://localhost:3000
+portless myapp next dev
+portless backend pnpm start
+# Visit http://localhost:3000 -> selector lets you choose myapp or backend.
+```
+
+`--shared-port` defaults the proxy port to 3000 and implies `--multiplex`. Pair with `-p <port>` to use a different port. The app `<name>` survives only as a label in the selector and switcher UI; routing is by cookie, not subdomain. Pick this mode when you want a port-replacement (no `<name>.localhost` URLs, no per-app bookmarks, no `api.myapp.localhost` cross-routing). Cannot be combined with `--lan`, since LAN mode needs distinct mDNS hostnames per app.
+
 ## Git Worktrees
 
 `portless run` automatically detects git worktrees. In a linked worktree, the branch name is prepended as a subdomain so each worktree gets its own URL without any config changes:
@@ -344,6 +357,7 @@ portless proxy start -p 1355     # Start on a custom port (no sudo)
 portless proxy start --foreground  # Start in foreground (for debugging)
 portless proxy start --wildcard  # Allow unregistered subdomains to fall back to parent
 portless proxy start --multiplex # Allow multiple apps to share one hostname
+portless proxy start --shared-port # Single host:port (default 3000) shared by every app
 portless proxy stop              # Stop the proxy
 ```
 
@@ -361,6 +375,7 @@ portless proxy stop              # Stop the proxy
 --tld <tld>                      Use a custom TLD instead of .localhost (e.g. test)
 --wildcard                       Allow unregistered subdomains to fall back to parent route
 --multiplex                      Allow multiple apps to share one hostname
+--shared-port                    Route every app through one host:port (default 3000); implies --multiplex
 --script <name>                  Run a specific package.json script (default: dev)
 --app-port <number>              Use a fixed port for the app (skip auto-assignment)
 --tailscale                      Share the app on your Tailscale network (tailnet)
@@ -380,6 +395,7 @@ PORTLESS_LAN=1                   Enable LAN mode when set to 1 (auto-detects LAN
 PORTLESS_TLD=<tld>               Use a custom TLD (e.g. test; default: localhost)
 PORTLESS_WILDCARD=1              Allow unregistered subdomains to fall back to parent route
 PORTLESS_MULTIPLEX=1             Allow multiple apps to share one hostname
+PORTLESS_SHARED_PORT=1           Route every app through one host:port (default 3000); implies multiplex
 PORTLESS_SYNC_HOSTS=0            Disable auto-sync of /etc/hosts (on by default)
 PORTLESS_TAILSCALE=1             Share apps on your Tailscale network (same as --tailscale)
 PORTLESS_FUNNEL=1                Share apps publicly via Tailscale Funnel (same as --funnel)

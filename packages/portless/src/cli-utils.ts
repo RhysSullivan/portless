@@ -250,6 +250,44 @@ export function writeMultiplexMarker(dir: string, enabled: boolean): void {
   }
 }
 
+const SHARED_PORT_MARKER_FILE = "proxy.shared-port";
+
+/**
+ * Default proxy port when --shared-port is enabled without an explicit -p.
+ * 3000 is the conventional dev-server port, which matches the user expectation
+ * of "my app runs on localhost:3000".
+ */
+export const DEFAULT_SHARED_PORT = 3000;
+
+/** Hostname every shared-port app registers under. */
+export const SHARED_PORT_HOSTNAME = "localhost";
+
+export function readSharedPortMarker(dir: string): boolean {
+  try {
+    return fs.existsSync(path.join(dir, SHARED_PORT_MARKER_FILE));
+  } catch {
+    return false;
+  }
+}
+
+export function writeSharedPortMarker(dir: string, enabled: boolean): void {
+  const markerPath = path.join(dir, SHARED_PORT_MARKER_FILE);
+  if (enabled) {
+    fs.writeFileSync(markerPath, "1", { mode: 0o644 });
+  } else {
+    try {
+      fs.unlinkSync(markerPath);
+    } catch {
+      // Marker may already be absent; non-fatal
+    }
+  }
+}
+
+export function isSharedPortEnvEnabled(): boolean {
+  const val = process.env.PORTLESS_SHARED_PORT;
+  return val === "1" || val === "true";
+}
+
 /** Default TLD when PORTLESS_TLD is not set. */
 export const DEFAULT_TLD = "localhost";
 
@@ -373,6 +411,7 @@ export function readPersistedProxyState(): {
   tld: string;
   lanMode: boolean;
   multiplex: boolean;
+  sharedPort: boolean;
 } | null {
   const dir = process.env.PORTLESS_STATE_DIR || USER_STATE_DIR;
   const port = readPortFromDir(dir);
@@ -381,7 +420,15 @@ export function readPersistedProxyState(): {
     const tld = readTldFromDir(dir);
     const lanIp = readLanMarker(dir);
     const multiplex = readMultiplexMarker(dir);
-    return { port, tls, tld, lanMode: lanIp !== null || tld === "local", multiplex };
+    const sharedPort = readSharedPortMarker(dir);
+    return {
+      port,
+      tls,
+      tld,
+      lanMode: lanIp !== null || tld === "local",
+      multiplex,
+      sharedPort,
+    };
   }
 
   return null;
@@ -397,6 +444,7 @@ export function buildProxyStartConfig(options: {
   tld: string;
   useWildcard?: boolean;
   multiplex?: boolean;
+  sharedPort?: boolean;
   foreground?: boolean;
   includePort?: boolean;
   proxyPort?: number;
@@ -444,6 +492,10 @@ export function buildProxyStartConfig(options: {
     args.push("--multiplex");
   }
 
+  if (options.sharedPort) {
+    args.push("--shared-port");
+  }
+
   if (options.skipTrust) {
     args.push("--skip-trust");
   }
@@ -465,6 +517,7 @@ export async function discoverState(): Promise<{
   lanMode: boolean;
   lanIp: string | null;
   multiplex: boolean;
+  sharedPort: boolean;
 }> {
   // Env var override
   if (process.env.PORTLESS_STATE_DIR) {
@@ -475,7 +528,17 @@ export async function discoverState(): Promise<{
       const tls = readTlsMarker(dir);
       const tld = readTldFromDir(dir);
       const multiplex = readMultiplexMarker(dir);
-      return { dir, port, tls, tld, lanMode: lanIp !== null || tld === "local", lanIp, multiplex };
+      const sharedPort = readSharedPortMarker(dir);
+      return {
+        dir,
+        port,
+        tls,
+        tld,
+        lanMode: lanIp !== null || tld === "local",
+        lanIp,
+        multiplex,
+        sharedPort,
+      };
     }
 
     return {
@@ -486,6 +549,7 @@ export async function discoverState(): Promise<{
       lanMode: lanIp !== null,
       lanIp: null,
       multiplex: readMultiplexMarker(dir),
+      sharedPort: readSharedPortMarker(dir),
     };
   }
 
@@ -500,6 +564,7 @@ export async function discoverState(): Promise<{
       const tld = readTldFromDir(USER_STATE_DIR);
       const lanIp = readLanMarker(USER_STATE_DIR);
       const multiplex = readMultiplexMarker(USER_STATE_DIR);
+      const sharedPort = readSharedPortMarker(USER_STATE_DIR);
       return {
         dir: USER_STATE_DIR,
         port: userPort,
@@ -508,6 +573,7 @@ export async function discoverState(): Promise<{
         lanMode: lanIp !== null || tld === "local",
         lanIp,
         multiplex,
+        sharedPort,
       };
     }
   }
@@ -528,6 +594,7 @@ export async function discoverState(): Promise<{
         lanMode: lanIp !== null || tld === "local",
         lanIp,
         multiplex: false,
+        sharedPort: false,
       };
     }
   }
@@ -547,7 +614,17 @@ export async function discoverState(): Promise<{
       const tld = readTldFromDir(dir);
       const lanIp = readLanMarker(dir);
       const multiplex = readMultiplexMarker(dir);
-      return { dir, port, tls, tld, lanMode: lanIp !== null || tld === "local", lanIp, multiplex };
+      const sharedPort = readSharedPortMarker(dir);
+      return {
+        dir,
+        port,
+        tls,
+        tld,
+        lanMode: lanIp !== null || tld === "local",
+        lanIp,
+        multiplex,
+        sharedPort,
+      };
     }
   }
 
@@ -560,6 +637,7 @@ export async function discoverState(): Promise<{
     lanMode: readLanMarker(dir) !== null,
     lanIp: null,
     multiplex: readMultiplexMarker(dir),
+    sharedPort: readSharedPortMarker(dir),
   };
 }
 

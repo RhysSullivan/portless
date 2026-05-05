@@ -29,12 +29,14 @@ import {
 } from "./auto.js";
 import {
   buildProxyStartConfig,
+  DEFAULT_SHARED_PORT,
   DEFAULT_TLD,
   FALLBACK_PROXY_PORT,
   INTERNAL_LAN_IP_ENV,
   INTERNAL_LAN_IP_FLAG,
   PRIVILEGED_PORT_THRESHOLD,
   RISKY_TLDS,
+  SHARED_PORT_HOSTNAME,
   WAIT_FOR_PROXY_INTERVAL_MS,
   WAIT_FOR_PROXY_MAX_ATTEMPTS,
   discoverState,
@@ -47,6 +49,7 @@ import {
   isHttpsEnvDisabled,
   isMultiplexEnvEnabled,
   isPortListening,
+  isSharedPortEnvEnabled,
   isWildcardEnvEnabled,
   isLanEnvEnabled,
   isProxyRunning,
@@ -55,6 +58,7 @@ import {
   readLanMarker,
   readMultiplexMarker,
   readPersistedProxyState,
+  readSharedPortMarker,
   readTldFromDir,
   readTlsMarker,
   resolveStateDir,
@@ -64,6 +68,7 @@ import {
   waitForProxy,
   writeLanMarker,
   writeMultiplexMarker,
+  writeSharedPortMarker,
   writeTldFile,
   writeTlsMarker,
 } from "./cli-utils.js";
@@ -148,6 +153,7 @@ type ProxyConfigExplicitness = {
   tld: boolean;
   useWildcard: boolean;
   multiplex: boolean;
+  sharedPort: boolean;
 };
 
 type ProxyConfig = {
@@ -160,6 +166,7 @@ type ProxyConfig = {
   tld: string;
   useWildcard: boolean;
   multiplex: boolean;
+  sharedPort: boolean;
 };
 
 function defaultProxyConfig(tld: string, useHttps: boolean, lanMode: boolean): ProxyConfig {
@@ -173,6 +180,7 @@ function defaultProxyConfig(tld: string, useHttps: boolean, lanMode: boolean): P
     tld: lanMode ? "local" : tld,
     useWildcard: false,
     multiplex: false,
+    sharedPort: false,
   };
 }
 
@@ -188,6 +196,7 @@ function resolveProxyConfig(options: {
   tld: string;
   useWildcard: boolean;
   multiplex: boolean;
+  sharedPort: boolean;
 }): ProxyConfig {
   const config = defaultProxyConfig(
     options.defaultTld,
@@ -238,6 +247,15 @@ function resolveProxyConfig(options: {
     config.multiplex = options.multiplex;
   }
 
+  if (options.explicit.sharedPort) {
+    config.sharedPort = options.sharedPort;
+  }
+
+  // Shared-port mode implies multiplex (multiple apps on one host:port).
+  if (config.sharedPort) {
+    config.multiplex = true;
+  }
+
   if (!config.lanMode) {
     config.lanIp = null;
     config.lanIpExplicit = false;
@@ -272,6 +290,7 @@ function readCurrentProxyConfig(dir: string): ProxyConfig {
     tld,
     useWildcard: false,
     multiplex: readMultiplexMarker(dir),
+    sharedPort: readSharedPortMarker(dir),
   };
 }
 
@@ -318,11 +337,20 @@ function getProxyConfigMismatchMessages(
     );
   }
 
+  if (explicit.sharedPort && desiredConfig.sharedPort !== actualConfig.sharedPort) {
+    messages.push(
+      desiredConfig.sharedPort
+        ? "requested shared-port mode, but the running proxy is not using shared-port mode"
+        : "requested non-shared-port mode, but the running proxy is using shared-port mode"
+    );
+  }
+
   return messages;
 }
 
 function formatProxyStartCommand(proxyPort: number, config: ProxyConfig): string {
   const needsSudo = !isWindows && proxyPort < PRIVILEGED_PORT_THRESHOLD;
+  const defaultPort = config.sharedPort ? DEFAULT_SHARED_PORT : getDefaultPort(config.useHttps);
   const { args } = buildProxyStartConfig({
     useHttps: config.useHttps,
     customCertPath: config.customCertPath,
@@ -332,8 +360,9 @@ function formatProxyStartCommand(proxyPort: number, config: ProxyConfig): string
     lanIpExplicit: config.lanIpExplicit,
     tld: config.tld,
     useWildcard: config.useWildcard,
-    multiplex: config.multiplex,
-    includePort: proxyPort !== getDefaultPort(config.useHttps),
+    multiplex: config.multiplex && !config.sharedPort,
+    sharedPort: config.sharedPort,
+    includePort: proxyPort !== defaultPort,
     proxyPort,
   });
   return `${needsSudo ? "sudo " : ""}portless proxy start${args.length > 0 ? ` ${args.join(" ")}` : ""}`;
@@ -426,7 +455,8 @@ function startProxyServer(
   tlsOptions?: { cert: Buffer; key: Buffer },
   lanIp?: string | null,
   strict?: boolean,
-  multiplex = false
+  multiplex = false,
+  sharedPort = false
 ): void {
   store.ensureDir();
 
@@ -590,11 +620,12 @@ function startProxyServer(
     writeTldFile(store.dir, tld);
     writeLanMarker(store.dir, activeLanIp);
     writeMultiplexMarker(store.dir, multiplex);
+    writeSharedPortMarker(store.dir, sharedPort);
     fixOwnership(store.dir, store.pidPath, store.portFilePath);
     const proto = isTls ? "HTTPS/2" : "HTTP";
     const tldLabel = tld !== DEFAULT_TLD ? ` (TLD: .${tld})` : "";
     const modeLabel = strict === false ? " (wildcard)" : "";
-    const multiplexLabel = multiplex ? " (multiplex)" : "";
+    const multiplexLabel = sharedPort ? " (shared-port)" : multiplex ? " (multiplex)" : "";
     console.log(
       colors.green(
         `${proto} proxy listening on port ${proxyPort}${tldLabel}${modeLabel}${multiplexLabel}`
@@ -652,6 +683,7 @@ function startProxyServer(
     writeTldFile(store.dir, DEFAULT_TLD);
     writeLanMarker(store.dir, null);
     writeMultiplexMarker(store.dir, false);
+    writeSharedPortMarker(store.dir, false);
     if (autoSyncHosts) cleanHostsFile();
     server.close(() => process.exit(0));
     // Force exit after a short timeout in case connections don't drain
@@ -705,6 +737,7 @@ async function stopProxy(store: RouteStore, proxyPort: number, _tls: boolean): P
           writeTldFile(store.dir, DEFAULT_TLD);
           writeLanMarker(store.dir, null);
           writeMultiplexMarker(store.dir, false);
+          writeSharedPortMarker(store.dir, false);
           console.log(colors.green(`Killed process ${pid}. Proxy stopped.`));
         } catch (err: unknown) {
           if (isErrnoException(err) && err.code === "EPERM") {
@@ -746,6 +779,7 @@ async function stopProxy(store: RouteStore, proxyPort: number, _tls: boolean): P
       writeTldFile(store.dir, DEFAULT_TLD);
       writeLanMarker(store.dir, null);
       writeMultiplexMarker(store.dir, false);
+      writeSharedPortMarker(store.dir, false);
       return;
     }
 
@@ -768,6 +802,7 @@ async function stopProxy(store: RouteStore, proxyPort: number, _tls: boolean): P
       writeTldFile(store.dir, DEFAULT_TLD);
       writeLanMarker(store.dir, null);
       writeMultiplexMarker(store.dir, false);
+      writeSharedPortMarker(store.dir, false);
       return;
     }
 
@@ -786,6 +821,7 @@ async function stopProxy(store: RouteStore, proxyPort: number, _tls: boolean): P
       writeTldFile(store.dir, DEFAULT_TLD);
       writeLanMarker(store.dir, null);
       writeMultiplexMarker(store.dir, false);
+      writeSharedPortMarker(store.dir, false);
       return;
     }
 
@@ -800,6 +836,7 @@ async function stopProxy(store: RouteStore, proxyPort: number, _tls: boolean): P
     writeTldFile(store.dir, DEFAULT_TLD);
     writeLanMarker(store.dir, null);
     writeMultiplexMarker(store.dir, false);
+    writeSharedPortMarker(store.dir, false);
     console.log(colors.green("Proxy stopped."));
   } catch (err: unknown) {
     if (isErrnoException(err) && err.code === "EPERM") {
@@ -861,6 +898,7 @@ function resolveProxyDesiredState(lanMode: boolean): ProxyDesiredState {
     tld: process.env.PORTLESS_TLD !== undefined,
     useWildcard: process.env.PORTLESS_WILDCARD !== undefined,
     multiplex: process.env.PORTLESS_MULTIPLEX !== undefined,
+    sharedPort: process.env.PORTLESS_SHARED_PORT !== undefined,
   };
   const desiredConfig = resolveProxyConfig({
     persistedLanMode: lanMode,
@@ -874,6 +912,7 @@ function resolveProxyDesiredState(lanMode: boolean): ProxyDesiredState {
     tld: envTld,
     useWildcard: isWildcardEnvEnabled(),
     multiplex: isMultiplexEnvEnabled(),
+    sharedPort: isSharedPortEnvEnabled(),
   });
   return { explicit, desiredConfig, envTld };
 }
@@ -915,13 +954,23 @@ async function ensureProxyRunning(
     if (!explicit.multiplex && persisted.multiplex !== desiredConfig.multiplex) {
       startConfig.multiplex = persisted.multiplex;
     }
-    const envPort = getDefaultPort(startConfig.useHttps);
+    if (!explicit.sharedPort && persisted.sharedPort !== desiredConfig.sharedPort) {
+      startConfig.sharedPort = persisted.sharedPort;
+      if (persisted.sharedPort) {
+        startConfig.multiplex = true;
+      }
+    }
+    const envPort = startConfig.sharedPort
+      ? DEFAULT_SHARED_PORT
+      : getDefaultPort(startConfig.useHttps);
     if (persisted.port !== envPort) {
       startPort = persisted.port;
     }
   }
 
-  const effectivePort = startPort ?? getDefaultPort(startConfig.useHttps);
+  const effectivePort =
+    startPort ??
+    (startConfig.sharedPort ? DEFAULT_SHARED_PORT : getDefaultPort(startConfig.useHttps));
   const needsSudo = !isWindows && effectivePort < PRIVILEGED_PORT_THRESHOLD;
   const manualStartCommand = formatProxyStartCommand(effectivePort, startConfig);
   const fallbackStartCommand = formatProxyStartCommand(FALLBACK_PROXY_PORT, startConfig);
@@ -951,7 +1000,8 @@ async function ensureProxyRunning(
     lanIpExplicit: startConfig.lanIpExplicit,
     tld: startConfig.tld,
     useWildcard: startConfig.useWildcard,
-    multiplex: startConfig.multiplex,
+    multiplex: startConfig.multiplex && !startConfig.sharedPort,
+    sharedPort: startConfig.sharedPort,
     includePort: startPort !== undefined,
     proxyPort: startPort,
   });
@@ -1003,7 +1053,8 @@ async function runApp(
   desiredPort?: number,
   lanMode = false,
   lanIp?: string | null,
-  multiplex = false
+  multiplex = false,
+  sharedPort = false
 ) {
   let store = initialStore;
   console.log(chalk.blue.bold(`\nportless\n`));
@@ -1042,7 +1093,9 @@ async function runApp(
     process.exit(1);
   }
 
-  // Validate the hostname before we try to auto-start the proxy.
+  // Validate the supplied name. In shared-port mode the result is later
+  // discarded (every app registers under SHARED_PORT_HOSTNAME), but the
+  // call still guards against unsafe characters in the user-facing label.
   parseHostname(name, tld);
 
   const ensureResult = await ensureProxyRunning(proxyPort, tls, desired);
@@ -1055,6 +1108,7 @@ async function runApp(
     lanMode = ensureResult.state.lanMode;
     lanIp = ensureResult.state.lanIp;
     multiplex = ensureResult.state.multiplex;
+    sharedPort = ensureResult.state.sharedPort;
     store = new RouteStore(stateDir, {
       onWarning: (msg: string) => console.warn(colors.yellow(msg)),
     });
@@ -1075,14 +1129,16 @@ async function runApp(
     lanMode = runningConfig.lanMode;
     lanIp = runningConfig.lanIp;
     multiplex = runningConfig.multiplex;
+    sharedPort = runningConfig.sharedPort;
     console.log(chalk.gray("-- Proxy is running"));
   }
 
-  // Compute hostname after auto-start so tld reflects the running proxy
-  // (e.g. --lan changes tld from "localhost" to "local")
-  const hostname = parseHostname(name, tld);
+  // In shared-port mode every app registers under SHARED_PORT_HOSTNAME so the
+  // multiplex selector handles disambiguation. The name supplied by the user
+  // survives only as a folder/command label in the selector UI.
+  const hostname = sharedPort ? SHARED_PORT_HOSTNAME : parseHostname(name, tld);
 
-  if (desired.envTld !== DEFAULT_TLD && desired.envTld !== tld) {
+  if (desired.envTld !== DEFAULT_TLD && desired.envTld !== tld && !sharedPort) {
     console.warn(
       chalk.yellow(
         `Warning: PORTLESS_TLD=${desired.envTld} but the running proxy uses .${tld}. Using .${tld}.`
@@ -1090,7 +1146,9 @@ async function runApp(
     );
   }
 
-  if (lanIp) {
+  if (sharedPort) {
+    console.log(chalk.gray(`-- shared-port mode (host: ${hostname})`));
+  } else if (lanIp) {
     console.log(chalk.gray(`-- ${hostname} (LAN: ${lanIp})`));
   } else {
     console.log(chalk.gray(`-- ${hostname} (auto-resolves to 127.0.0.1)`));
@@ -1583,6 +1641,7 @@ ${colors.bold("Options:")}
   --tld <tld>                   Use a custom TLD instead of .localhost (e.g. test, dev)
   --wildcard                    Allow unregistered subdomains to fall back to parent route
   --multiplex                   Allow multiple apps to share the same hostname
+  --shared-port                 Route every app through one host:port (default 3000); implies --multiplex
   --app-port <number>           Use a fixed port for the app (skip auto-assignment)
   --tailscale                   Share the app on your Tailscale network (tailnet)
   --funnel                      Share the app publicly via Tailscale Funnel
@@ -1598,6 +1657,7 @@ ${colors.bold("Environment variables:")}
   PORTLESS_TLD=<tld>            Use a custom TLD (e.g. test, dev; default: localhost)
   PORTLESS_WILDCARD=1           Allow unregistered subdomains to fall back to parent route
   PORTLESS_MULTIPLEX=1          Allow multiple apps to share the same hostname
+  PORTLESS_SHARED_PORT=1        Route every app through one host:port (default 3000); implies multiplex
   PORTLESS_SYNC_HOSTS=0         Disable auto-sync of ${HOSTS_DISPLAY} (on by default)
   PORTLESS_TAILSCALE=1          Share apps on your Tailscale network (same as --tailscale)
   PORTLESS_FUNNEL=1             Share apps publicly via Tailscale Funnel (same as --funnel)
@@ -2147,6 +2207,7 @@ ${colors.bold("Usage:")}
   ${colors.cyan("portless proxy start --tld test")}     Use .test instead of .localhost
   ${colors.cyan("portless proxy start --wildcard")}     Allow unregistered subdomains to fall back to parent
   ${colors.cyan("portless proxy start --multiplex")}    Allow multiple apps to share one hostname
+  ${colors.cyan("portless proxy start --shared-port")}  Single host:port (default 3000) shared by every app
   ${colors.cyan("portless proxy stop")}                 Stop the proxy
 
 ${colors.bold("LAN mode (--lan):")}
@@ -2195,10 +2256,16 @@ ${colors.bold("LAN mode (--lan):")}
   // Custom cert/key implies HTTPS
   let useHttps = wantHttps || !!(customCertPath && customKeyPath);
 
+  // --shared-port mode: every app registers under a single hostname:port,
+  // and the multiplex selector chooses between them. Defaults to port 3000
+  // when no -p/--port is given.
+  const wantsSharedPort = args.includes("--shared-port") || isSharedPortEnvEnabled();
+
   // Parse --port / -p flag. When not set, default to the protocol-standard
-  // port (443 for HTTPS, 80 for HTTP) so URLs are clean.
+  // port (443 for HTTPS, 80 for HTTP) so URLs are clean. In shared-port
+  // mode the default is DEFAULT_SHARED_PORT (3000) instead.
   let hasExplicitPort = false;
-  let proxyPort = getDefaultPort(useHttps);
+  let proxyPort = wantsSharedPort ? DEFAULT_SHARED_PORT : getDefaultPort(useHttps);
   let portFlagIndex = args.indexOf("--port");
   if (portFlagIndex === -1) portFlagIndex = args.indexOf("-p");
   if (portFlagIndex !== -1) {
@@ -2242,7 +2309,9 @@ ${colors.bold("LAN mode (--lan):")}
   }
   // Parse --wildcard flag (disables the default strict subdomain matching)
   const useWildcard = args.includes("--wildcard") || isWildcardEnvEnabled();
-  const multiplex = args.includes("--multiplex") || isMultiplexEnvEnabled();
+  const sharedPort = wantsSharedPort;
+  // Shared-port mode implies multiplex (multiple apps on one host:port).
+  const multiplex = args.includes("--multiplex") || isMultiplexEnvEnabled() || sharedPort;
 
   const explicit: ProxyConfigExplicitness = {
     useHttps:
@@ -2256,7 +2325,12 @@ ${colors.bold("LAN mode (--lan):")}
     lanIp: process.env.PORTLESS_LAN_IP !== undefined,
     tld: tldIdx !== -1 || process.env.PORTLESS_TLD !== undefined,
     useWildcard: args.includes("--wildcard") || process.env.PORTLESS_WILDCARD !== undefined,
-    multiplex: args.includes("--multiplex") || process.env.PORTLESS_MULTIPLEX !== undefined,
+    multiplex:
+      args.includes("--multiplex") ||
+      args.includes("--shared-port") ||
+      process.env.PORTLESS_MULTIPLEX !== undefined ||
+      process.env.PORTLESS_SHARED_PORT !== undefined,
+    sharedPort: args.includes("--shared-port") || process.env.PORTLESS_SHARED_PORT !== undefined,
   };
 
   // Resolve state directory based on the port
@@ -2287,6 +2361,7 @@ ${colors.bold("LAN mode (--lan):")}
     tld,
     useWildcard,
     multiplex,
+    sharedPort,
   });
   const lanMode = desiredConfig.lanMode;
   useHttps = desiredConfig.useHttps;
@@ -2295,10 +2370,20 @@ ${colors.bold("LAN mode (--lan):")}
   tld = desiredConfig.tld;
   const desiredWildcard = desiredConfig.useWildcard;
   const desiredMultiplex = desiredConfig.multiplex;
+  const desiredSharedPort = desiredConfig.sharedPort;
   let lanIp: string | null = desiredConfig.lanIpExplicit ? desiredConfig.lanIp : null;
 
+  // Shared-port + LAN are mutually exclusive: shared-port routes everyone
+  // through `localhost`, but LAN mode needs distinct .local hostnames per
+  // device.
+  if (desiredSharedPort && lanMode) {
+    console.error(colors.red("Error: --shared-port cannot be combined with --lan."));
+    console.error(colors.blue("LAN mode requires distinct mDNS hostnames per app."));
+    process.exit(1);
+  }
+
   if (!hasExplicitPort && runningPort === null) {
-    proxyPort = getDefaultPort(useHttps);
+    proxyPort = desiredSharedPort ? DEFAULT_SHARED_PORT : getDefaultPort(useHttps);
     stateDir = resolveStateDir(proxyPort);
   }
 
@@ -2399,6 +2484,7 @@ ${colors.bold("LAN mode (--lan):")}
     tld,
     useWildcard: desiredWildcard,
     multiplex: desiredMultiplex,
+    sharedPort: desiredSharedPort,
   };
 
   // Privileged ports require root on Unix. Auto-elevate with sudo when
@@ -2418,7 +2504,8 @@ ${colors.bold("LAN mode (--lan):")}
         lanIpExplicit: desiredConfig.lanIpExplicit,
         tld,
         useWildcard: desiredWildcard,
-        multiplex: desiredMultiplex,
+        multiplex: desiredMultiplex && !desiredSharedPort,
+        sharedPort: desiredSharedPort,
         foreground: isForeground,
         includePort: true,
         proxyPort,
@@ -2567,7 +2654,8 @@ ${colors.bold("LAN mode (--lan):")}
       tlsOptions,
       lanIp,
       desiredWildcard ? false : undefined,
-      desiredMultiplex
+      desiredMultiplex,
+      desiredSharedPort
     );
     return;
   }
@@ -2597,7 +2685,8 @@ ${colors.bold("LAN mode (--lan):")}
         lanIpExplicit: desiredConfig.lanIpExplicit,
         tld,
         useWildcard: desiredWildcard,
-        multiplex: desiredMultiplex,
+        multiplex: desiredMultiplex && !desiredSharedPort,
+        sharedPort: desiredSharedPort,
         foreground: true,
         includePort: true,
         proxyPort,
@@ -2734,7 +2823,7 @@ async function handleDefaultSingle(
   const worktree = detectWorktreePrefix(cwd);
   const effectiveName = worktree ? `${worktree.prefix}.${baseName}` : baseName;
 
-  const { dir, port, tls, tld, lanMode, lanIp, multiplex } = await discoverState();
+  const { dir, port, tls, tld, lanMode, lanIp, multiplex, sharedPort } = await discoverState();
   const store = new RouteStore(dir, {
     onWarning: (msg) => console.warn(colors.yellow(msg)),
   });
@@ -2751,7 +2840,8 @@ async function handleDefaultSingle(
     appConfig?.appPort,
     lanMode,
     lanIp,
-    multiplex
+    multiplex,
+    sharedPort
   );
 }
 
@@ -2818,6 +2908,7 @@ async function spawnProxiedApp(
   tls: boolean,
   tld: string,
   multiplex: boolean,
+  sharedPort: boolean,
   exitCodes: Map<string, number | null>
 ): Promise<{
   child: ReturnType<typeof spawn>;
@@ -2848,16 +2939,18 @@ async function spawnProxiedApp(
     const protocol = tls ? "https" : "http";
     const portSuffix =
       (tls && proxyPort === 443) || (!tls && proxyPort === 80) ? "" : `:${proxyPort}`;
-    const url = `${protocol}://${app.name}.${tld}${portSuffix}`;
+    const url = sharedPort
+      ? `${protocol}://${SHARED_PORT_HOSTNAME}${portSuffix}`
+      : `${protocol}://${app.name}.${tld}${portSuffix}`;
     displayUrl = url;
 
-    hostname = parseHostname(app.name, tld);
+    hostname = sharedPort ? SHARED_PORT_HOSTNAME : parseHostname(app.name, tld);
     store.addRoute(
       hostname,
       appPort,
       process.pid,
       false,
-      multiplex,
+      multiplex || sharedPort,
       getRouteMetadata(app.pkg.dir, app.commandArgs)
     );
 
@@ -3046,7 +3139,7 @@ async function handleDefaultMulti(
 
   console.log(chalk.blue.bold(`\nportless\n`));
 
-  let { dir, port, tls, tld, multiplex } = await discoverState();
+  let { dir, port, tls, tld, multiplex, sharedPort } = await discoverState();
 
   if (proxiedApps.length > 0) {
     let multiDesired: ProxyDesiredState;
@@ -3063,9 +3156,10 @@ async function handleDefaultMulti(
       tls = ensureResult.state.tls;
       tld = ensureResult.state.tld;
       multiplex = ensureResult.state.multiplex;
+      sharedPort = ensureResult.state.sharedPort;
     } else {
       // Proxy was already running; re-discover to pick up current state.
-      ({ dir, port, tls, tld, multiplex } = await discoverState());
+      ({ dir, port, tls, tld, multiplex, sharedPort } = await discoverState());
     }
 
     if (tls && !isCATrusted(dir)) {
@@ -3083,13 +3177,14 @@ async function handleDefaultMulti(
       tls,
       tld,
       multiplex,
+      sharedPort,
       scriptName,
       proxiedApps,
       taskApps,
       extraArgs
     );
   } else {
-    await runWithDirectSpawn(dir, port, tls, tld, multiplex, proxiedApps, taskApps);
+    await runWithDirectSpawn(dir, port, tls, tld, multiplex, sharedPort, proxiedApps, taskApps);
   }
 }
 
@@ -3100,6 +3195,7 @@ async function runWithTurbo(
   tls: boolean,
   tld: string,
   multiplex: boolean,
+  sharedPort: boolean,
   scriptName: string,
   proxiedApps: MultiAppEntry[],
   taskApps: MultiAppEntry[],
@@ -3124,16 +3220,18 @@ async function runWithTurbo(
     const protocol = tls ? "https" : "http";
     const portSuffix =
       (tls && proxyPort === 443) || (!tls && proxyPort === 80) ? "" : `:${proxyPort}`;
-    const url = `${protocol}://${app.name}.${tld}${portSuffix}`;
+    const url = sharedPort
+      ? `${protocol}://${SHARED_PORT_HOSTNAME}${portSuffix}`
+      : `${protocol}://${app.name}.${tld}${portSuffix}`;
     appUrls.push({ label: app.label, url });
 
-    const hostname = parseHostname(app.name, tld);
+    const hostname = sharedPort ? SHARED_PORT_HOSTNAME : parseHostname(app.name, tld);
     store.addRoute(
       hostname,
       appPort,
       process.pid,
       false,
-      multiplex,
+      multiplex || sharedPort,
       getRouteMetadata(app.pkg.dir, app.commandArgs)
     );
     routes.push({ hostname, port: appPort });
@@ -3228,6 +3326,7 @@ async function runWithDirectSpawn(
   tls: boolean,
   tld: string,
   multiplex: boolean,
+  sharedPort: boolean,
   proxiedApps: MultiAppEntry[],
   taskApps: MultiAppEntry[]
 ): Promise<void> {
@@ -3246,6 +3345,7 @@ async function runWithDirectSpawn(
       tls,
       tld,
       multiplex,
+      sharedPort,
       exitCodes
     );
     children.push(child);
@@ -3371,7 +3471,7 @@ async function handleRunMode(args: string[], globalScript?: string): Promise<voi
   const worktree = detectWorktreePrefix();
   const effectiveName = worktree ? `${worktree.prefix}.${baseName}` : baseName;
 
-  const { dir, port, tls, tld, lanMode, lanIp, multiplex } = await discoverState();
+  const { dir, port, tls, tld, lanMode, lanIp, multiplex, sharedPort } = await discoverState();
   const store = new RouteStore(dir, {
     onWarning: (msg) => console.warn(colors.yellow(msg)),
   });
@@ -3388,7 +3488,8 @@ async function handleRunMode(args: string[], globalScript?: string): Promise<voi
     parsed.appPort,
     lanMode,
     lanIp,
-    multiplex
+    multiplex,
+    sharedPort
   );
 }
 
@@ -3417,7 +3518,7 @@ async function handleNamedMode(args: string[]): Promise<void> {
     .map((label) => truncateLabel(label))
     .join(".");
 
-  const { dir, port, tls, tld, lanMode, lanIp, multiplex } = await discoverState();
+  const { dir, port, tls, tld, lanMode, lanIp, multiplex, sharedPort } = await discoverState();
   const store = new RouteStore(dir, {
     onWarning: (msg) => console.warn(colors.yellow(msg)),
   });
@@ -3434,7 +3535,8 @@ async function handleNamedMode(args: string[]): Promise<void> {
     parsed.appPort,
     lanMode,
     lanIp,
-    multiplex
+    multiplex,
+    sharedPort
   );
 }
 
@@ -3524,6 +3626,11 @@ async function main() {
     process.env.PORTLESS_TAILSCALE = "1";
   }
   if (stripGlobalFlag("--multiplex", false)) {
+    process.env.PORTLESS_MULTIPLEX = "1";
+  }
+  if (stripGlobalFlag("--shared-port", false)) {
+    process.env.PORTLESS_SHARED_PORT = "1";
+    // Shared-port mode implies multiplex.
     process.env.PORTLESS_MULTIPLEX = "1";
   }
 

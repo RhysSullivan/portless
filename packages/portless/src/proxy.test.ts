@@ -353,6 +353,88 @@ describe("createProxyServer", () => {
       expect(res.body).toContain("next dev");
     });
 
+    it("routes shared-port style apps registered under bare 'localhost'", async () => {
+      // Shared-port mode registers every app under hostname "localhost" and
+      // relies on the multiplex selector + cookie to pick between them.
+      const apiBackend = trackServer(
+        http.createServer((_req, res) => {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("api backend");
+        })
+      );
+      await listen(apiBackend);
+      const apiAddr = apiBackend.address();
+      if (!apiAddr || typeof apiAddr === "string") throw new Error("no addr");
+
+      const webBackend = trackServer(
+        http.createServer((_req, res) => {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("web backend");
+        })
+      );
+      await listen(webBackend);
+      const webAddr = webBackend.address();
+      if (!webAddr || typeof webAddr === "string") throw new Error("no addr");
+
+      const routes: RouteInfo[] = [
+        { id: "api", hostname: "localhost", port: apiAddr.port, pid: 111, folder: "api" },
+        { id: "web", hostname: "localhost", port: webAddr.port, pid: 222, folder: "web" },
+      ];
+      const server = trackServer(
+        createProxyServer({
+          getRoutes: () => routes,
+          proxyPort: TEST_PROXY_PORT,
+          multiplex: true,
+        })
+      );
+      await listen(server);
+
+      // Without a cookie, the user gets the multiplex selector page.
+      const selectorRes = await request(server, { host: "localhost" });
+      expect(selectorRes.status).toBe(200);
+      expect(selectorRes.body).toContain("Select App");
+      expect(selectorRes.body).toContain(`127.0.0.1:${apiAddr.port}`);
+      expect(selectorRes.body).toContain(`127.0.0.1:${webAddr.port}`);
+
+      // With the cookie set, the request goes straight to the chosen backend.
+      const routedRes = await request(server, {
+        host: "localhost",
+        headers: { cookie: "portless_app=web" },
+      });
+      expect(routedRes.status).toBe(200);
+      expect(routedRes.body).toBe("web backend");
+    });
+
+    it("routes directly when only one shared-port app is registered", async () => {
+      // With a single registered app under "localhost", multiplex mode still
+      // routes the request straight through (no selector page).
+      const backend = trackServer(
+        http.createServer((_req, res) => {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("only app");
+        })
+      );
+      await listen(backend);
+      const addr = backend.address();
+      if (!addr || typeof addr === "string") throw new Error("no addr");
+
+      const routes: RouteInfo[] = [
+        { id: "only", hostname: "localhost", port: addr.port, pid: 111, folder: "myapp" },
+      ];
+      const server = trackServer(
+        createProxyServer({
+          getRoutes: () => routes,
+          proxyPort: TEST_PROXY_PORT,
+          multiplex: true,
+        })
+      );
+      await listen(server);
+
+      const res = await request(server, { host: "localhost" });
+      expect(res.status).toBe(200);
+      expect(res.body).toBe("only app");
+    });
+
     it("routes wildcard subdomain to matching parent route when strict is false", async () => {
       const backend = trackServer(
         http.createServer((_req, res) => {

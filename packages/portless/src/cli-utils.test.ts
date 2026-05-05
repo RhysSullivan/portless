@@ -7,12 +7,14 @@ import * as path from "node:path";
 import {
   buildProxyStartConfig,
   BLOCKED_PORTS,
+  DEFAULT_SHARED_PORT,
   DEFAULT_TLD,
   FALLBACK_PROXY_PORT,
   INTERNAL_LAN_IP_FLAG,
   LEGACY_SYSTEM_STATE_DIR,
   PRIVILEGED_PORT_THRESHOLD,
   RISKY_TLDS,
+  SHARED_PORT_HOSTNAME,
   USER_STATE_DIR,
   discoverState,
   findFreePort,
@@ -20,16 +22,19 @@ import {
   getDefaultTld,
   getProtocolPort,
   isHttpsEnvDisabled,
+  isSharedPortEnvEnabled,
   injectFrameworkFlags,
   isProxyRunning,
   parsePidFromNetstat,
   readLanMarker,
   readPersistedProxyState,
+  readSharedPortMarker,
   readTldFromDir,
   resolveStateDir,
   validateTld,
   writeLanMarker,
   writeMultiplexMarker,
+  writeSharedPortMarker,
   writeTldFile,
   writeTlsMarker,
 } from "./cli-utils.js";
@@ -822,6 +827,22 @@ describe("buildProxyStartConfig", () => {
       args: ["--no-tls", "--tld", "test"],
     });
   });
+
+  it("emits --shared-port when sharedPort is set", () => {
+    expect(
+      buildProxyStartConfig({
+        useHttps: false,
+        lanMode: false,
+        tld: "localhost",
+        sharedPort: true,
+        includePort: true,
+        proxyPort: 3000,
+      })
+    ).toEqual({
+      effectiveTld: "localhost",
+      args: ["--port", "3000", "--no-tls", "--shared-port"],
+    });
+  });
 });
 
 describe("readLanMarker / writeLanMarker", () => {
@@ -1017,6 +1038,81 @@ describe("readPersistedProxyState", () => {
       tld: "local",
       lanMode: true,
       multiplex: false,
+      sharedPort: false,
     });
+  });
+
+  it("reads shared-port mode from persisted state", () => {
+    fs.writeFileSync(path.join(tmpDir, "proxy.port"), "3000");
+    writeSharedPortMarker(tmpDir, true);
+    const state = readPersistedProxyState();
+    expect(state).not.toBeNull();
+    expect(state!.sharedPort).toBe(true);
+  });
+});
+
+describe("readSharedPortMarker / writeSharedPortMarker", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "portless-shared-port-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns false when the marker is absent", () => {
+    expect(readSharedPortMarker(tmpDir)).toBe(false);
+  });
+
+  it("writes and reads back true", () => {
+    writeSharedPortMarker(tmpDir, true);
+    expect(readSharedPortMarker(tmpDir)).toBe(true);
+  });
+
+  it("removes the marker when writing false", () => {
+    writeSharedPortMarker(tmpDir, true);
+    writeSharedPortMarker(tmpDir, false);
+    expect(readSharedPortMarker(tmpDir)).toBe(false);
+  });
+});
+
+describe("isSharedPortEnvEnabled", () => {
+  const original = process.env.PORTLESS_SHARED_PORT;
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.PORTLESS_SHARED_PORT;
+    else process.env.PORTLESS_SHARED_PORT = original;
+  });
+
+  it("returns false when unset", () => {
+    delete process.env.PORTLESS_SHARED_PORT;
+    expect(isSharedPortEnvEnabled()).toBe(false);
+  });
+
+  it("returns true for '1'", () => {
+    process.env.PORTLESS_SHARED_PORT = "1";
+    expect(isSharedPortEnvEnabled()).toBe(true);
+  });
+
+  it("returns true for 'true'", () => {
+    process.env.PORTLESS_SHARED_PORT = "true";
+    expect(isSharedPortEnvEnabled()).toBe(true);
+  });
+
+  it("returns false for '0'", () => {
+    process.env.PORTLESS_SHARED_PORT = "0";
+    expect(isSharedPortEnvEnabled()).toBe(false);
+  });
+});
+
+describe("shared-port constants", () => {
+  it("DEFAULT_SHARED_PORT is 3000", () => {
+    expect(DEFAULT_SHARED_PORT).toBe(3000);
+  });
+
+  it("SHARED_PORT_HOSTNAME is 'localhost'", () => {
+    expect(SHARED_PORT_HOSTNAME).toBe("localhost");
   });
 });
